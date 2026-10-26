@@ -23,7 +23,6 @@ Scopes follow the module names (`gadget`, `monitor`, `uploader`, `mailer`, `api`
 ## Development setup
 
 ```bash
-./packaging/fetch-vendor.sh      # Bootstrap into web/public/assets/vendor
 ./scripts/dev-server.sh          # simulated USB stick, UI on http://127.0.0.1:8080
 ```
 

@@ -45,7 +45,7 @@ if (empty($_SESSION['setup_code'])) {
         unset($_SESSION['setup_code']);
         $errors['code'] = error_message($response);
     }
-    render('setup', ['title' => t('setup.title'), 'screen' => 'code', 'steps' => $steps, 'step' => null,
+    render('setup', ['title' => t('setup.title'), 'screen' => 'code', 'steps' => $steps, 'step' => null, 'hideLanguageFooter' => true,
         'errors' => $errors, 'old' => $old, 'simulated' => !empty($status->data['simulated'])], 'layout_plain');
     exit;
 }

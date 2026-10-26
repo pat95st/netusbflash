@@ -85,7 +85,6 @@ You need Python 3.11+ with the `cryptography` package and PHP 8.2+ with the
 with a folder.
 
 ```bash
-./packaging/fetch-vendor.sh      # once: download Bootstrap into web/public/assets/vendor
 ./scripts/dev-server.sh          # service + UI on http://127.0.0.1:8080
 ```
 

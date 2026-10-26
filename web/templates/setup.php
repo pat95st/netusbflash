@@ -56,7 +56,7 @@ $current = $step === null ? -1 : array_search($step, $steps, true);
                 <input class="form-control form-control-lg font-monospace<?= invalid($errors, 'code') ?>" id="code" name="code"
                        placeholder="XXXX-XXXX-XXXX" autocomplete="off" autocapitalize="characters" required autofocus>
                 <?= feedback($errors, 'code') ?>
-                <div class="form-text"><?= e(t('setup.code_help')) ?></div>
+                <div class="form-text"><?= e(t('setup.code_help')) ?> <code>sudo netusbflash-cli setup show-code</code></div>
                 <button class="btn btn-primary mt-3" type="submit"><?= e(t('common.continue')) ?></button>
             </form>
 

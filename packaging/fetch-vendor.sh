@@ -2,8 +2,8 @@
 # Download Bootstrap and Bootstrap Icons into web/public/assets/vendor.
 #
 # The web UI loads these files from the Pi itself (no CDN), so it also works
-# without internet access. Run this once on a machine with internet access and
-# commit the result, or let install.sh run it on the Pi.
+# without internet access. The files are committed to the repository; run this
+# script only to update them (change the versions below first).
 #
 #   ./packaging/fetch-vendor.sh            # download if missing
 #   ./packaging/fetch-vendor.sh --force    # download again
@@ -23,35 +23,40 @@ if [ "$FORCE" = 0 ] && [ -f "$VENDOR/bootstrap/css/bootstrap.min.css" ] \
     exit 0
 fi
 
-command -v curl >/dev/null || { echo "curl is required" >&2; exit 1; }
+for tool in curl unzip; do
+    command -v "$tool" >/dev/null || { echo "$tool is required" >&2; exit 1; }
+done
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-fetch() {
-    local name="$1" version="$2"
-    echo "Downloading $name $version ..."
-    curl -fsSL "https://registry.npmjs.org/$name/-/$name-$version.tgz" -o "$TMP/$name.tgz"
-    mkdir -p "$TMP/$name"
-    tar -xzf "$TMP/$name.tgz" -C "$TMP/$name"
-}
+echo "Downloading Bootstrap $BOOTSTRAP_VERSION ..."
+curl -fsSL -o "$TMP/bootstrap.zip" \
+    "https://github.com/twbs/bootstrap/releases/download/v$BOOTSTRAP_VERSION/bootstrap-$BOOTSTRAP_VERSION-dist.zip"
+echo "Downloading Bootstrap Icons $ICONS_VERSION ..."
+curl -fsSL -o "$TMP/icons.zip" \
+    "https://github.com/twbs/icons/releases/download/v$ICONS_VERSION/bootstrap-icons-$ICONS_VERSION.zip"
+unzip -q "$TMP/bootstrap.zip" -d "$TMP"
+unzip -q "$TMP/icons.zip" -d "$TMP"
 
-fetch bootstrap "$BOOTSTRAP_VERSION"
-fetch bootstrap-icons "$ICONS_VERSION"
+B="$TMP/bootstrap-$BOOTSTRAP_VERSION-dist"
+I="$TMP/bootstrap-icons-$ICONS_VERSION/font"
+LICENSES="$(cd "$VENDOR" && pwd)"
+
+# Keep the license files (they are maintained in this repository).
+mkdir -p "$TMP/keep"
+cp "$VENDOR/bootstrap/LICENSE" "$TMP/keep/bootstrap-LICENSE" 2>/dev/null || true
+cp "$VENDOR/bootstrap-icons/LICENSE" "$TMP/keep/icons-LICENSE" 2>/dev/null || true
 
 rm -rf "$VENDOR/bootstrap" "$VENDOR/bootstrap-icons"
 mkdir -p "$VENDOR/bootstrap/css" "$VENDOR/bootstrap/js" "$VENDOR/bootstrap-icons/font/fonts"
+cp "$B/css/bootstrap.min.css" "$B/css/bootstrap.min.css.map" "$VENDOR/bootstrap/css/"
+cp "$B/js/bootstrap.bundle.min.js" "$B/js/bootstrap.bundle.min.js.map" "$VENDOR/bootstrap/js/"
+cp "$I/bootstrap-icons.min.css" "$VENDOR/bootstrap-icons/font/"
+cp "$I/fonts/bootstrap-icons.woff2" "$I/fonts/bootstrap-icons.woff" "$VENDOR/bootstrap-icons/font/fonts/"
+cp "$TMP/keep/bootstrap-LICENSE" "$VENDOR/bootstrap/LICENSE" 2>/dev/null || true
+cp "$TMP/keep/icons-LICENSE" "$VENDOR/bootstrap-icons/LICENSE" 2>/dev/null || true
 
-B="$TMP/bootstrap/package"
-cp "$B/dist/css/bootstrap.min.css" "$B/dist/css/bootstrap.min.css.map" "$VENDOR/bootstrap/css/"
-cp "$B/dist/js/bootstrap.bundle.min.js" "$B/dist/js/bootstrap.bundle.min.js.map" "$VENDOR/bootstrap/js/"
-cp "$B/LICENSE" "$VENDOR/bootstrap/LICENSE"
-
-I="$TMP/bootstrap-icons/package"
-cp "$I/font/bootstrap-icons.min.css" "$VENDOR/bootstrap-icons/font/"
-cp "$I/font/fonts/bootstrap-icons.woff2" "$I/font/fonts/bootstrap-icons.woff" "$VENDOR/bootstrap-icons/font/fonts/"
-cp "$I/LICENSE" "$VENDOR/bootstrap-icons/LICENSE"
-
-cat > "$VENDOR/VERSIONS" <<EOF
+cat > "$LICENSES/VERSIONS" <<EOF
 bootstrap $BOOTSTRAP_VERSION
 bootstrap-icons $ICONS_VERSION
 EOF

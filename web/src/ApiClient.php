@@ -67,11 +67,9 @@ final class ApiClient
         $raw = curl_exec($ch);
         if ($raw === false) {
             $message = curl_error($ch);
-            curl_close($ch);
             return new ApiResponse(503, ['error' => 'service_unavailable', 'message' => $message]);
         }
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-        curl_close($ch);
         $data = json_decode((string) $raw, true);
         if (!is_array($data)) {
             return new ApiResponse(502, ['error' => 'bad_response', 'message' => 'Invalid response from service']);
