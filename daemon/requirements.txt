@@ -1,0 +1,3 @@
+# The service uses the Python standard library plus one package.
+# On Raspberry Pi OS install it with apt (python3-cryptography), not pip.
+cryptography>=38

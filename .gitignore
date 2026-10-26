@@ -1,0 +1,12 @@
+# Local development data (scripts/dev-server.sh)
+.dev/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store

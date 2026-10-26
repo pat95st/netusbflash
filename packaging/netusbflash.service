@@ -1,0 +1,33 @@
+[Unit]
+Description=NetUSBFlash (USB stick emulation and upload service)
+Documentation=https://github.com/pat95st/netusbflash
+After=network-online.target local-fs.target sys-kernel-config.mount
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=PYTHONPATH=/opt/netusbflash/daemon
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/var/lib/netusbflash
+Environment=XDG_CACHE_HOME=/var/lib/netusbflash/cache
+ExecStart=/usr/bin/python3 -m netusbflash
+Restart=on-failure
+RestartSec=5
+
+# Runs as root: configuring the USB gadget and mounting the disk image need it.
+# The web UI talks to it only through the Unix socket in /run/netusbflash.
+RuntimeDirectory=netusbflash
+RuntimeDirectoryMode=0755
+StateDirectory=netusbflash
+StateDirectoryMode=0750
+ConfigurationDirectory=netusbflash
+ConfigurationDirectoryMode=0750
+UMask=0027
+
+# Hardening that does not get in the way of configfs, mount and hostnamectl.
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

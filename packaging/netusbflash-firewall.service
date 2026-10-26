@@ -1,0 +1,13 @@
+[Unit]
+Description=NetUSBFlash firewall rules (web UI reachable from the local network only)
+After=nftables.service
+Before=nginx.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/netusbflash/firewall.nft
+ExecStop=-/usr/sbin/nft delete table inet netusbflash
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,37 @@
+/* NetUSBFlash UI tweaks on top of Bootstrap 5 */
+
+.plain-container {
+    max-width: 760px;
+}
+
+.narrow-card {
+    max-width: 420px;
+}
+
+.wizard-card {
+    max-width: 760px;
+}
+
+.wizard-steps .badge {
+    font-weight: 500;
+    padding: 0.45em 0.8em;
+}
+
+.card-header.bg-body {
+    border-bottom-color: var(--bs-border-color-translucent);
+}
+
+.table > :not(caption) > * > th {
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: var(--bs-secondary-color);
+}
+
+.progress {
+    height: 0.5rem;
+}
+
+[data-protocols][hidden],
+[data-auth][hidden] {
+    display: none !important;
+}
