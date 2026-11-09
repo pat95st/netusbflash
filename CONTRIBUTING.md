@@ -23,14 +23,20 @@ Scopes follow the module names (`gadget`, `monitor`, `uploader`, `mailer`, `api`
 ## Development setup
 
 ```bash
+./packaging/fetch-filegator.sh   # once: file manager into vendor/filegator (git-ignored)
 ./scripts/dev-server.sh          # simulated USB stick, UI on http://127.0.0.1:8080
 ```
+
+Third-party front-end files (Bootstrap, Bootstrap Icons, Quill) are committed in
+`web/public/assets/vendor`; update them with `packaging/fetch-vendor.sh`.
+Releases are described in [docs/releasing.md](docs/releasing.md).
 
 ## Checks before a pull request
 
 ```bash
 cd daemon && python3 -m unittest discover -s tests
 php web/tests/check_lang.php
+node web/tests/e2e.js            # browser test, needs a fresh ./scripts/dev-server.sh on port 8099
 find web -name '*.php' -exec php -l {} \; | grep -v 'No syntax errors'
 bash -n packaging/install.sh
 ```
@@ -40,6 +46,7 @@ bash -n packaging/install.sh
 - Python: PEP 8, type hints, standard library first. External commands only via
   `system.run()` with an argument list, never a shell string.
 - PHP: `declare(strict_types=1)`, PSR-12 style, escape all output with `e()`, every form
-  posts a CSRF token (`csrf_field()`), no inline JavaScript or CSS (the CSP blocks it).
+  posts a CSRF token (`csrf_field()`), no inline JavaScript or CSS (the CSP blocks it; only
+  the notifications page allows inline styles for the mail editor).
 - The web interface never changes the system directly; add an API endpoint instead and
   check the role there.

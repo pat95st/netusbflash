@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- File manager for the USB stick contents (FileGator, under /fm/, login shared with NetUSBFlash): read-only view while the host is connected, edit mode for managers that disconnects the host (30-minute timeout)
+- Notification rules: custom subject and HTML text with placeholders, rich-text editor (Quill), preview and test mail; mails are sent as HTML with a plain-text part
+- Updates page: NetUSBFlash updates from GitHub releases (checksum-verified, optional pre-releases, daily check) and Raspberry Pi OS package updates, with live log
+- Backup page: download (passwords optionally encrypted with a passphrase), restore, scheduled upload to a storage target folder
+- Release workflow: tags v* build netusbflash-<version>.tar.gz (FileGator bundled) with a SHA-256 file
+- Navigation: administration pages grouped in a menu
+- systemd: PrivateTmp/ProtectHome removed so the file manager's mount is visible to PHP-FPM
+
+- Web interface: all pages load and save their data via AJAX; a loading spinner is shown during every request
+- Setup wizard: page skeleton in HTML, steps loaded and submitted via AJAX
+- Bootstrap 5.3.3 and Bootstrap Icons 1.11.3 are bundled in the repository
+- Fix: PHP 8.5 deprecation warning (curl_close)
+- Fix: time zone selection was empty when the current zone was not in the list
+
 ## 0.1.0-alpha.1 – 2026-10-26
 
 First alpha.

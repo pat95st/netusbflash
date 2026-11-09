@@ -76,6 +76,7 @@ sudo curl -s --unix-socket /run/netusbflash/api.sock http://localhost/api/v1/hea
 | PUT | `/api/v1/smtp` | manager |
 | POST | `/api/v1/smtp/test` | manager |
 | GET | `/api/v1/rules` | manager |
+| POST | `/api/v1/rules/preview` | manager |
 | POST | `/api/v1/rules` | manager |
 | PUT | `/api/v1/rules/{id}` | manager |
 | DELETE | `/api/v1/rules/{id}` | manager |
@@ -89,3 +90,37 @@ sudo curl -s --unix-socket /run/netusbflash/api.sock http://localhost/api/v1/hea
 | POST | `/api/v1/system/setup-reset` | admin |
 | GET | `/api/v1/system/ssh-key` | manager |
 | POST | `/api/v1/system/ssh-key` | manager |
+| GET | `/api/v1/browser` | viewer |
+| POST | `/api/v1/browser` | viewer |
+| POST | `/api/v1/browser/refresh` | viewer |
+| GET | `/api/v1/update` | admin |
+| PUT | `/api/v1/update` | admin |
+| POST | `/api/v1/update/check` | admin |
+| POST | `/api/v1/update/software` | admin |
+| POST | `/api/v1/update/os-check` | admin |
+| POST | `/api/v1/update/os` | admin |
+| GET | `/api/v1/backup` | admin |
+| PUT | `/api/v1/backup` | admin |
+| POST | `/api/v1/backup/run` | admin |
+| POST | `/api/v1/backup/export` | admin |
+| POST | `/api/v1/backup/restore` | admin |
+
+## Notes on newer endpoints
+
+- `POST /browser` with `{"mode": "off" | "view" | "edit"}` switches the file
+  manager's view of the USB image. `view` mounts it read-only at
+  `/srv/netusbflash/usb-stick`; `edit` (manager or higher) disconnects the host
+  and mounts it writable until the mode is left or the timeout (30 minutes)
+  ends.
+- Notification rules accept `subject_template` (text, max. 250 characters) and
+  `body_template` (HTML, sanitised on save). Empty means the built-in text.
+  `GET /rules` lists the available placeholders and the default texts;
+  `POST /rules/preview` renders a rule with example files and, with
+  `send_to`, sends it as a test mail.
+- `POST /update/software` and `POST /update/os` start a transient systemd
+  unit; its output is returned as `log` by `GET /update`.
+- `POST /backup/export` with an optional `passphrase` returns
+  `{"filename", "backup"}`. `POST /backup/restore` with `{"backup", "passphrase"}`
+  replaces settings, targets, rules and users and ends all sessions. Error
+  codes: `invalid_backup`, `backup_too_new`, `backup_without_admin`,
+  `passphrase_required`, `wrong_passphrase`.

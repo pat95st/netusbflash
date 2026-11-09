@@ -121,6 +121,9 @@ class Monitor(threading.Thread):
         gadget = self.ctx.gadget
         if not gadget.image_exists():
             return
+        if self.ctx.browser.is_editing():
+            self.state["phase"] = "editing"
+            return
         latest = gadget.last_write()
         now = time.time()
         if latest > self.seen_write:
@@ -140,6 +143,11 @@ class Monitor(threading.Thread):
 
     def sync(self, cfg: dict[str, Any], reason: str) -> dict[str, int]:
         with self.sync_lock:
+            if self.ctx.browser.is_editing():
+                # The file manager has the stick open for editing; scan afterwards.
+                self.dirty = True
+                self.state["phase"] = "editing"
+                return {"created": 0, "modified": 0, "deleted": 0, "cleaned": 0}
             gadget = self.ctx.gadget
             detach = cfg["sync_mode"] == "detach"
             writable = detach and bool(cfg["delete_after_upload"])
@@ -151,7 +159,7 @@ class Monitor(threading.Thread):
                 if detach and was_attached:
                     gadget.detach()
                     time.sleep(1.0)  # give the host a moment to notice the removal
-                with gadget.mount(writable=writable) as root:
+                with self.ctx.browser.paused(), gadget.mount(writable=writable) as root:
                     if writable:
                         counts["cleaned"] = self.cleanup(root)
                     counts.update(self.scan(root, cfg))

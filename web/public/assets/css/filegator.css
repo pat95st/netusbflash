@@ -1,0 +1,7 @@
+/* NetUSBFlash tweaks for the embedded file manager (FileGator).
+   Login, logout and profile are handled by NetUSBFlash, so FileGator's own controls are hidden. */
+.navbar-item.login,
+.navbar-item.logout,
+.navbar-item.profile {
+    display: none !important;
+}

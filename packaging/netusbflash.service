@@ -25,8 +25,8 @@ ConfigurationDirectoryMode=0750
 UMask=0027
 
 # Hardening that does not get in the way of configfs, mount and hostnamectl.
-ProtectHome=read-only
-PrivateTmp=yes
+# No PrivateTmp/ProtectHome: both give the service its own mount namespace,
+# and the file manager's mount of the USB image must be visible to PHP-FPM.
 NoNewPrivileges=yes
 
 [Install]

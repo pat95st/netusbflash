@@ -89,8 +89,8 @@ class PipelineTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
         self.svc.start_workers()
 
-    def _fake_send(self, recipients, subject, body, cfg=None):
-        self.sent.append((recipients, subject, body))
+    def _fake_send(self, recipients, subject, body, cfg=None, html_body=None):
+        self.sent.append((recipients, subject, body, html_body))
 
     def tearDown(self):
         self.svc.close()

@@ -94,6 +94,16 @@ class GadgetBackend:
     def last_write(self) -> float:
         raise NotImplementedError
 
+    def mount_at(self, target: Path, writable: bool, gid: int | None = None) -> None:
+        raise NotImplementedError
+
+    def unmount_at(self, target: Path, writable: bool = False) -> None:
+        raise NotImplementedError
+
+    @staticmethod
+    def is_mounted(target: Path) -> bool:
+        raise NotImplementedError
+
     @contextmanager
     def mount(self, writable: bool) -> Iterator[Path]:
         raise NotImplementedError
@@ -290,20 +300,39 @@ class ConfigfsGadget(GadgetBackend):
         except FileNotFoundError:
             return 0.0
 
-    @contextmanager
-    def mount(self, writable: bool) -> Iterator[Path]:
-        mnt = self.paths.mountpoint
-        mnt.mkdir(parents=True, exist_ok=True)
+    def mount_at(self, target: Path, writable: bool, gid: int | None = None) -> None:
+        """Mount the image's file system at target.
+
+        With gid, files are owned by that group (read for a read-only mount,
+        read/write for a writable one), so the web server can show them.
+        """
+        target.mkdir(parents=True, exist_ok=True)
         opts = ["rw" if writable else "ro", "loop"]
         if self._has_partition_table():
             opts.append(f"offset={PARTITION_OFFSET}")
-        run(["mount", "-o", ",".join(opts), str(self.paths.image), str(mnt)], timeout=60)
+        if gid is not None:
+            # Writable: group may read and write. Read-only: group may read.
+            fmask, dmask = ("0007", "0007") if writable else ("0137", "0027")
+            opts += ["uid=0", f"gid={gid}", f"fmask={fmask}", f"dmask={dmask}"]
+        run(["mount", "-o", ",".join(opts), str(self.paths.image), str(target)], timeout=60)
+
+    def unmount_at(self, target: Path, writable: bool = False) -> None:
+        run(["umount", str(target)], timeout=120, check=False)
+        if writable:
+            run(["sync"], timeout=120, check=False)
+
+    @staticmethod
+    def is_mounted(target: Path) -> bool:
+        return os.path.ismount(target)
+
+    @contextmanager
+    def mount(self, writable: bool) -> Iterator[Path]:
+        mnt = self.paths.mountpoint
+        self.mount_at(mnt, writable)
         try:
             yield mnt
         finally:
-            run(["umount", str(mnt)], timeout=120, check=False)
-            if writable:
-                run(["sync"], timeout=120, check=False)
+            self.unmount_at(mnt, writable)
 
     def _has_partition_table(self) -> bool:
         try:
@@ -399,6 +428,16 @@ class SimulatedGadget(GadgetBackend):
                 except FileNotFoundError:
                     pass
         return latest
+
+    def mount_at(self, target: Path, writable: bool, gid: int | None = None) -> None:
+        pass
+
+    def unmount_at(self, target: Path, writable: bool = False) -> None:
+        pass
+
+    @staticmethod
+    def is_mounted(target: Path) -> bool:
+        return True
 
     @contextmanager
     def mount(self, writable: bool) -> Iterator[Path]:

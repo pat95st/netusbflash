@@ -34,6 +34,11 @@ final class I18n
         return self::$strings[$locale];
     }
 
+    public static function exists(string $locale): bool
+    {
+        return array_key_exists($locale, self::LOCALES);
+    }
+
     public static function has(string $key): bool
     {
         return isset(self::load(self::$locale)[$key]) || isset(self::load('en')[$key]);

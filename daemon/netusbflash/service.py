@@ -13,6 +13,8 @@ from typing import Any, Callable
 from . import __version__, system
 from .api import Router, make_server
 from .auth import AuthService
+from .backup import BackupService
+from .browser import FileBrowser
 from .config import Paths, load_paths, simulate
 from .crypto import SecretBox
 from .db import Database
@@ -23,6 +25,7 @@ from .monitor import Monitor
 from .setup import SetupState
 from .system import CommandError
 from .transports import DEFAULT_OPTIONS
+from .updater import Updater
 from .uploader import Uploader
 
 log = logging.getLogger("netusbflash")
@@ -45,6 +48,13 @@ class Context:
         self.mailer = Mailer(self)
         self.uploader = Uploader(self)
         self.monitor = Monitor(self)
+        self.browser = FileBrowser(self)
+        self.updater = Updater(self)
+        self.backup = BackupService(self)
+
+    @property
+    def workers(self) -> tuple:
+        return (self.monitor, self.uploader, self.mailer, self.browser, self.updater, self.backup)
 
     def usb_settings(self) -> dict[str, Any]:
         return self.db.get_dict_setting("usb", DEFAULT_USB)
@@ -114,15 +124,16 @@ def main(argv: list[str] | None = None) -> None:
     server = make_server(ctx, router, paths.socket)
 
     stop = threading.Event()
-    for worker in (ctx.monitor, ctx.uploader, ctx.mailer):
+    for worker in ctx.workers:
         worker.start()
     threading.Thread(target=housekeeping, args=(ctx, stop), name="housekeeping", daemon=True).start()
 
     def shutdown(signum: int, frame: Any) -> None:
         log.info("stopping (signal %s)", signum)
         stop.set()
-        for worker in (ctx.monitor, ctx.uploader, ctx.mailer):
+        for worker in ctx.workers:
             worker.stop()
+        ctx.browser.shutdown()
         threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGTERM, shutdown)

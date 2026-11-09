@@ -58,6 +58,15 @@ class Paths:
         return self.lib / "usb.img"
 
     @property
+    def browse_dir(self) -> Path:
+        """Where the file manager sees the USB stick (mounted read-only or for editing)."""
+        return Path(os.environ.get("NETUSBFLASH_BROWSE_DIR", "/srv/netusbflash/usb-stick"))
+
+    @property
+    def updates(self) -> Path:
+        return self.lib / "updates"
+
+    @property
     def sim_dir(self) -> Path:
         """Directory that stands in for the USB stick in simulation mode."""
         return self.lib / "usb-sim"
@@ -69,6 +78,7 @@ class Paths:
             (self.run, 0o755),
             (self.spool, 0o750),
             (self.ssh_dir, 0o700),
+            (self.updates, 0o750),
         ):
             directory.mkdir(parents=True, exist_ok=True)
             try:

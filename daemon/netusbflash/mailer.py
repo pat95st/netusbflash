@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import re
 import logging
 import smtplib
 import ssl
@@ -10,6 +11,10 @@ import threading
 import time
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
+from html import escape
+
+from . import __version__
+from .htmlsafe import sanitise, to_text
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -33,32 +38,75 @@ DEFAULT_SMTP: dict[str, Any] = {
 
 TEXT = {
     "en": {
-        "subject": "[{host}] {count} file event(s)",
-        "intro": "NetUSBFlash on {host} reports:",
+        "subject": "[{{host}}] {{count}} file event(s)",
+        "intro": "NetUSBFlash on {{host}} reports:",
         "created": "New files",
         "modified": "Changed files",
         "deleted": "Deleted files",
         "uploaded": "Uploaded files",
         "upload_failed": "Failed uploads",
-        "footer": "This message was sent automatically by NetUSBFlash (rule: {rule}).",
+        "footer": "This message was sent automatically by NetUSBFlash (rule: {{rule}}).",
         "test_subject": "[{host}] NetUSBFlash test email",
         "test_body": "This is a test email from NetUSBFlash on {host}. Your SMTP settings work.",
     },
     "de": {
-        "subject": "[{host}] {count} Datei-Ereignis(se)",
-        "intro": "NetUSBFlash auf {host} meldet:",
+        "subject": "[{{host}}] {{count}} Datei-Ereignis(se)",
+        "intro": "NetUSBFlash auf {{host}} meldet:",
         "created": "Neue Dateien",
         "modified": "Geänderte Dateien",
         "deleted": "Gelöschte Dateien",
         "uploaded": "Hochgeladene Dateien",
         "upload_failed": "Fehlgeschlagene Uploads",
-        "footer": "Diese Nachricht wurde automatisch von NetUSBFlash versendet (Regel: {rule}).",
+        "footer": "Diese Nachricht wurde automatisch von NetUSBFlash versendet (Regel: {{rule}}).",
         "test_subject": "[{host}] NetUSBFlash Testmail",
         "test_body": "Dies ist eine Testmail von NetUSBFlash auf {host}. Die SMTP-Einstellungen funktionieren.",
     },
 }
 
 MAX_LINES_PER_SECTION = 200
+
+# Placeholders usable in subject and body templates, written as {{name}}.
+PLACEHOLDERS = (
+    "host", "rule", "count", "date", "time", "version", "files", "file_names",
+    "created_count", "modified_count", "deleted_count", "uploaded_count", "failed_count",
+    "created_list", "modified_list", "deleted_list", "uploaded_list", "failed_list",
+)
+_PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-z_]+)\s*\}\}")
+# Placeholders that expand to a list: a paragraph that holds nothing else is
+# replaced as a whole (editors put every line into a <p>, and <ul> may not be
+# nested in <p>).
+_BLOCK_PARAGRAPH_RE = re.compile(r"<p>\s*(\{\{\s*(?:files|[a-z]+_list)\s*\}\})\s*</p>")
+_EVENT_KEY = {"created": "created", "modified": "modified", "deleted": "deleted",
+              "uploaded": "uploaded", "upload_failed": "failed"}
+
+
+def default_templates(locale: str) -> dict[str, str]:
+    text = TEXT.get(locale, TEXT["en"])
+    body = (
+        f"<p>{escape(text['intro'])}</p>"
+        "{{files}}"
+        "<hr>"
+        f"<p><span style=\"color: #6c757d\">{escape(text['footer'])}</span></p>"
+    )
+    return {"subject": text["subject"], "body": body}
+
+
+def render(template: str, values: dict[str, tuple[str, str]], html_mode: bool) -> str:
+    """Replace {{name}} with the text or HTML value; unknown names stay as they are."""
+    def repl(match: re.Match[str]) -> str:
+        pair = values.get(match.group(1))
+        if pair is None:
+            return match.group(0)
+        return pair[1] if html_mode else pair[0]
+    return _PLACEHOLDER_RE.sub(repl, template)
+
+
+def wrap_html(fragment: str) -> str:
+    return (
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head>"
+        "<body style=\"margin:0;padding:16px;font-family:Arial,Helvetica,sans-serif;font-size:14px;"
+        "line-height:1.5;color:#212529\">" + fragment + "</body></html>"
+    )
 
 
 class MailError(Exception):
@@ -134,8 +182,8 @@ class Mailer(threading.Thread):
                 continue
             recipients = [r for r in rule["recipients"].split(",") if r]
             for locale, group in self._group_by_locale(recipients).items():
-                subject, body = self.compose(rule, items, locale)
-                self.enqueue(group, subject, body)
+                subject, html_body, text = self.compose(rule, items, locale)
+                self.enqueue(group, subject, text, html_body)
             with db.transaction() as conn:
                 conn.executemany("UPDATE notify_items SET sent = 1 WHERE id = ?", [(i["id"],) for i in items])
 
@@ -147,32 +195,77 @@ class Mailer(threading.Thread):
             groups.setdefault(locale, []).append(address)
         return groups
 
-    def compose(self, rule: dict, items: list[dict], locale: str) -> tuple[str, str]:
+    def placeholder_values(self, rule: dict, items: list[dict], locale: str) -> dict[str, tuple[str, str]]:
+        """Values for every placeholder as (plain text, HTML)."""
         text = TEXT.get(locale, TEXT["en"])
-        host = self.ctx.hostname()
-        lines = [text["intro"].format(host=host), ""]
+        now = time.time()
+        values: dict[str, tuple[str, str]] = {}
+
+        def plain(name: str, value: Any) -> None:
+            values[name] = (str(value), escape(str(value)))
+
+        plain("host", self.ctx.hostname())
+        plain("rule", rule.get("name", ""))
+        plain("count", len(items))
+        plain("date", time.strftime("%d.%m.%Y" if locale == "de" else "%Y-%m-%d", time.localtime(now)))
+        plain("time", time.strftime("%H:%M", time.localtime(now)))
+        plain("version", __version__)
+        names = [i["path"].rsplit("/", 1)[-1] for i in items]
+        short = ", ".join(names[:5]) + (f" (+{len(names) - 5})" if len(names) > 5 else "")
+        plain("file_names", short)
+
+        sections_text, sections_html = [], []
         for event in EVENT_TYPES:
+            key = _EVENT_KEY[event]
             section = [i for i in items if i["event"] == event]
-            if not section:
-                continue
-            lines.append(f"{text[event]} ({len(section)}):")
+            plain(f"{key}_count", len(section))
+            lines_text, lines_html = [], []
             for item in section[:MAX_LINES_PER_SECTION]:
                 stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(item["time"]))
-                detail = f"  [{item['detail']}]" if item["detail"] else ""
-                lines.append(f"  {stamp}  {item['path']}{detail}")
+                detail = f" [{item['detail']}]" if item["detail"] else ""
+                lines_text.append(f"  {stamp}  {item['path']}{detail}")
+                lines_html.append(
+                    f"<li><span style=\"color: #6c757d\">{escape(stamp)}</span> "
+                    f"{escape(item['path'])}{escape(detail)}</li>")
             if len(section) > MAX_LINES_PER_SECTION:
-                lines.append(f"  … +{len(section) - MAX_LINES_PER_SECTION}")
-            lines.append("")
-        lines += ["--", text["footer"].format(rule=rule["name"])]
-        subject = text["subject"].format(host=host, count=len(items))
-        return subject, "\n".join(lines)
+                more = f"… +{len(section) - MAX_LINES_PER_SECTION}"
+                lines_text.append(f"  {more}")
+                lines_html.append(f"<li>{escape(more)}</li>")
+            list_html = f"<ul>{''.join(lines_html)}</ul>" if lines_html else ""
+            values[f"{key}_list"] = ("\n".join(lines_text), list_html)
+            if section:
+                heading = f"{text[event]} ({len(section)})"
+                sections_text.append(f"{heading}:\n" + "\n".join(lines_text))
+                sections_html.append(f"<p><strong>{escape(heading)}</strong></p>{list_html}")
+        values["files"] = ("\n\n".join(sections_text), "".join(sections_html))
+        return values
+
+    def compose(self, rule: dict, items: list[dict], locale: str) -> tuple[str, str, str]:
+        """Return (subject, html fragment, plain text) for a rule's pending items."""
+        defaults = default_templates(locale)
+        values = self.placeholder_values(rule, items, locale)
+        subject_tpl = (rule.get("subject_template") or "").strip() or defaults["subject"]
+        body_tpl = (rule.get("body_template") or "").strip() or defaults["body"]
+        subject = " ".join(render(subject_tpl, values, html_mode=False).split())[:250]
+        html_body = render(_BLOCK_PARAGRAPH_RE.sub(r"\1", sanitise(body_tpl)), values, html_mode=True)
+        return subject, html_body, to_text(html_body)
+
+    def preview(self, rule: dict, locale: str) -> dict[str, str]:
+        now = time.time()
+        sample = [
+            {"event": "created", "path": "REC/SONG01.WAV", "time": now - 300, "detail": ""},
+            {"event": "created", "path": "REC/SONG02.WAV", "time": now - 120, "detail": ""},
+            {"event": "uploaded", "path": "REC/SONG01.WAV", "time": now - 60, "detail": "NAS"},
+        ]
+        subject, html_body, text = self.compose(rule, sample, locale)
+        return {"subject": subject, "html": html_body, "text": text}
 
     # Queue.
 
-    def enqueue(self, recipients: list[str], subject: str, body: str) -> None:
+    def enqueue(self, recipients: list[str], subject: str, body: str, html_body: str = "") -> None:
         self.ctx.db.run(
-            "INSERT INTO mail_queue(created_at, recipients, subject, body) VALUES(?, ?, ?, ?)",
-            (time.time(), ",".join(recipients), subject, body),
+            "INSERT INTO mail_queue(created_at, recipients, subject, body, html) VALUES(?, ?, ?, ?, ?)",
+            (time.time(), ",".join(recipients), subject, body, html_body),
         )
 
     def send_queue(self) -> None:
@@ -183,7 +276,7 @@ class Mailer(threading.Thread):
         for row in db.all("SELECT * FROM mail_queue WHERE sent_at IS NULL AND attempts < 8 AND next_try <= ? "
                           "ORDER BY id LIMIT 10", (now,)):
             try:
-                self.send(row["recipients"].split(","), row["subject"], row["body"])
+                self.send(row["recipients"].split(","), row["subject"], row["body"], html_body=row.get("html") or None)
             except MailError as exc:
                 attempts = row["attempts"] + 1
                 db.run("UPDATE mail_queue SET attempts = ?, last_error = ?, next_try = ? WHERE id = ?",
@@ -194,7 +287,8 @@ class Mailer(threading.Thread):
 
     # SMTP.
 
-    def send(self, recipients: list[str], subject: str, body: str, cfg: dict[str, Any] | None = None) -> None:
+    def send(self, recipients: list[str], subject: str, body: str, cfg: dict[str, Any] | None = None,
+             html_body: str | None = None) -> None:
         cfg = cfg or self.settings()
         if not cfg["host"] or not cfg["sender"]:
             raise MailError("SMTP is not configured")
@@ -204,6 +298,8 @@ class Mailer(threading.Thread):
         msg["Subject"] = subject
         msg["Message-ID"] = make_msgid(domain=cfg["sender"].split("@")[-1])
         msg.set_content(body)
+        if html_body:
+            msg.add_alternative(wrap_html(html_body), subtype="html")
         context = ssl.create_default_context()
         if not cfg.get("verify_tls", True):
             context.check_hostname = False

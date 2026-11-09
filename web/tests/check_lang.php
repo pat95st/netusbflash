@@ -41,10 +41,12 @@ foreach ($dynamic as $prefix => $suffixes) {
 
 $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS));
 foreach ($iterator as $file) {
-    if ($file->getExtension() !== 'php' || str_contains($file->getPathname(), '/lang/') || str_contains($file->getPathname(), '/tests/')) {
+    $ext = $file->getExtension();
+    $p = $file->getPathname();
+    if (!in_array($ext, ['php', 'js'], true) || str_contains($p, '/lang/') || str_contains($p, '/tests/') || str_contains($p, '/vendor/')) {
         continue;
     }
-    preg_match_all("/(?<![A-Za-z_])t\\('([a-z_.0-9]+)'[,)]/", (string) file_get_contents($file->getPathname()), $m);
+    preg_match_all("/(?<![A-Za-z_])t\\('([a-z_.0-9]+)'[,)]/", (string) file_get_contents($p), $m);
     foreach ($m[1] as $key) {
         if (!isset($en[$key])) {
             $failures[] = "used but not defined: $key (" . substr($file->getPathname(), strlen($root) + 1) . ')';

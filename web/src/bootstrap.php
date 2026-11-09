@@ -8,7 +8,6 @@ define('APP_VERSION', trim((string) @file_get_contents(dirname(APP_ROOT) . '/VER
 require __DIR__ . '/ApiClient.php';
 require __DIR__ . '/I18n.php';
 require __DIR__ . '/helpers.php';
-require __DIR__ . '/forms.php';
 
 $https = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
 ini_set('session.use_strict_mode', '1');
@@ -28,4 +27,4 @@ I18n::setLocale(I18n::detect(current_user()));
 header('X-Frame-Options: DENY');
 header('X-Content-Type-Options: nosniff');
 header('Referrer-Policy: same-origin');
-header("Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; font-src 'self'; frame-ancestors 'none'; form-action 'self'");
+send_csp();

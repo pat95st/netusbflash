@@ -1,7 +1,8 @@
 # Third-party front-end files
 
 The web UI uses [Bootstrap](https://getbootstrap.com/) 5 and
-[Bootstrap Icons](https://icons.getbootstrap.com/), both MIT licensed. They are
+[Bootstrap Icons](https://icons.getbootstrap.com/), both MIT licensed. The
+HTML mail template editor uses [Quill](https://quilljs.com/) 1.3.7 (BSD-3-Clause). They are
 served from the Pi itself; no CDN is used. The files are part of the
 repository, so a Pi needs no internet access to show the UI.
 

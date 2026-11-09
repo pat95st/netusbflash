@@ -67,7 +67,7 @@ class ServiceFixture:
         self.client = Client(str(self.paths.socket))
 
     def start_workers(self) -> None:
-        for worker in (self.ctx.monitor, self.ctx.uploader, self.ctx.mailer):
+        for worker in (self.ctx.monitor, self.ctx.uploader, self.ctx.mailer, self.ctx.browser):
             worker.start()
 
     def complete_setup(self, password: str = "correct-horse-battery") -> None:
@@ -88,7 +88,7 @@ class ServiceFixture:
         c.token = body["token"]
 
     def close(self) -> None:
-        for worker in (self.ctx.monitor, self.ctx.uploader, self.ctx.mailer):
+        for worker in (self.ctx.monitor, self.ctx.uploader, self.ctx.mailer, self.ctx.browser):
             worker.stop()
         self.server.shutdown()
         self.server.server_close()

@@ -21,5 +21,8 @@ require __DIR__ . '/head.php';
 </main>
 <script src="/assets/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
 <script src="/assets/js/app.js"></script>
+<?php foreach ($scripts as $script): ?>
+<script src="<?= e($script) ?>"></script>
+<?php endforeach; ?>
 </body>
 </html>

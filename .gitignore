@@ -1,6 +1,9 @@
 # Local development data (scripts/dev-server.sh)
 .dev/
 
+# Downloaded dependencies (packaging/fetch-filegator.sh)
+/vendor/
+
 # Python
 __pycache__/
 *.pyc

@@ -78,13 +78,20 @@ install_packages() {
         nginx php-fpm php-curl php-mbstring \
         rclone exfatprogs dosfstools fdisk util-linux \
         openssh-client sshpass \
-        nftables avahi-daemon openssl curl ca-certificates
+        nftables avahi-daemon openssl curl unzip ca-certificates
 }
 
 fetch_vendor() {
-    if [ ! -f "$SRC/web/public/assets/vendor/bootstrap/css/bootstrap.min.css" ]; then
-        info "Bootstrap is not bundled yet, downloading it ..."
+    if [ ! -f "$SRC/web/public/assets/vendor/bootstrap/css/bootstrap.min.css" ] \
+        || [ ! -f "$SRC/web/public/assets/vendor/quill/quill.min.js" ]; then
+        info "Front-end libraries are not bundled yet, downloading them ..."
         "$SRC/packaging/fetch-vendor.sh"
+    fi
+    # The file manager (FileGator) is bundled in release archives; a git
+    # checkout downloads it here.
+    if [ ! -f "$SRC/vendor/filegator/vendor/autoload.php" ]; then
+        info "Downloading the file manager (FileGator) ..."
+        "$SRC/packaging/fetch-filegator.sh"
     fi
 }
 
@@ -100,6 +107,10 @@ copy_files() {
     mv "$APP_DIR/daemon.new" "$APP_DIR/daemon"
     mv "$APP_DIR/web.new" "$APP_DIR/web"
     install -m 0644 "$SRC/VERSION" "$APP_DIR/VERSION"
+    rm -rf "$APP_DIR/filegator.new"
+    cp -a "$SRC/vendor/filegator" "$APP_DIR/filegator.new"
+    rm -rf "$APP_DIR/filegator"
+    mv "$APP_DIR/filegator.new" "$APP_DIR/filegator"
     chown -R root:root "$APP_DIR"
     chmod -R go-w "$APP_DIR"
 
@@ -114,6 +125,12 @@ setup_group() {
     getent group "$GROUP" >/dev/null || groupadd --system "$GROUP"
     usermod -a -G "$GROUP" www-data
     install -d -m 0750 -o root -g root "$ETC_DIR" "$LIB_DIR"
+    # Mount point of the file manager's view of the USB image, and FileGator's
+    # writable data (sessions, temporary upload chunks, log).
+    install -d -m 0755 -o root -g root /srv/netusbflash
+    install -d -m 0750 -o root -g "$GROUP" /srv/netusbflash/usb-stick
+    install -d -m 0755 -o root -g root /var/cache/netusbflash
+    install -d -m 0700 -o www-data -g www-data /var/cache/netusbflash/filegator
 }
 
 boot_config_file() {
@@ -236,7 +253,9 @@ uninstall() {
     rm -f /etc/nginx/sites-enabled/netusbflash /etc/nginx/sites-available/netusbflash
     systemctl reload nginx 2>/dev/null || true
     rm -f /usr/local/bin/netusbflash-cli /etc/modules-load.d/netusbflash.conf
-    rm -rf "$APP_DIR"
+    umount /srv/netusbflash/usb-stick 2>/dev/null || true
+    rm -rf "$APP_DIR" /var/cache/netusbflash
+    rmdir /srv/netusbflash/usb-stick /srv/netusbflash 2>/dev/null || true
     if [ "$PURGE" = 1 ]; then
         info "Deleting all settings and data (--purge) ..."
         rm -rf "$ETC_DIR" "$LIB_DIR"

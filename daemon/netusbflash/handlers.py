@@ -10,9 +10,13 @@ from typing import TYPE_CHECKING, Any
 
 from . import __version__, system
 from .api import ApiError, Request, Router
-from .auth import LOCALES, ROLES, AuthError, generate_password, public_user, verify_password
+from .auth import LOCALES, ROLES, AuthError, generate_password, has_role, public_user, verify_password
 from .gadget import DEFAULT_USB, FILESYSTEMS, SYNC_MODES, GadgetError
-from .mailer import DEFAULT_SMTP, EVENT_TYPES, SECURITY_MODES, MailError
+from .backup import INTERVALS, BackupError
+from .browser import MODES as BROWSER_MODES, BrowserError
+from .htmlsafe import sanitise
+from .mailer import DEFAULT_SMTP, EVENT_TYPES, PLACEHOLDERS, SECURITY_MODES, MailError, default_templates
+from .updater import REPO_RE, UpdateError
 from .setup import STEPS
 from .system import CommandError
 from .transports import DEFAULT_OPTIONS, PROTOCOLS, TransferError, make_transport
@@ -176,10 +180,25 @@ def parse_rule(body: dict[str, Any]) -> dict[str, Any]:
     mode = v.choice("mode", ("instant", "digest"), "instant")
     minutes = v.integer("digest_minutes", minimum=5, maximum=10080, default=60)
     enabled = v.boolean("enabled", True)
+    subject = v.string("subject_template", max_len=250)
+    body_template = body.get("body_template") or ""
+    if not isinstance(body_template, str) or len(body_template) > 100_000:
+        v.errors["body_template"] = "too_long"
+        body_template = ""
     v.raise_if_errors()
+    body_clean = sanitise(body_template)
+    # An editor that is left empty produces "<p><br></p>": treat that as "use the default".
+    if not sanitise_is_empty(body_clean):
+        body_template = body_clean
+    else:
+        body_template = ""
     return {"name": name, "events": ",".join(e for e in EVENT_TYPES if e in events), "pattern": pattern,
             "recipients": ",".join(recipients), "mode": mode, "digest_minutes": minutes,
-            "enabled": int(enabled)}
+            "enabled": int(enabled), "subject_template": subject, "body_template": body_template}
+
+
+def sanitise_is_empty(fragment: str) -> bool:
+    return not re.sub(r"<[^>]+>|&nbsp;|\s", "", fragment)
 
 
 def rule_public(row: dict[str, Any]) -> dict[str, Any]:
@@ -212,6 +231,11 @@ def apply_gadget(ctx: "Context") -> str:
 
 
 def create_image(ctx: "Context", cfg: dict[str, Any]) -> None:
+    if ctx.browser.mode != "off":
+        try:
+            ctx.browser.set_mode("off")
+        except BrowserError as exc:
+            raise ApiError(409, "browser_busy", str(exc)) from exc
     with ctx.monitor.sync_lock:
         try:
             ctx.gadget.create_image(cfg)
@@ -279,7 +303,7 @@ def register(router: Router, ctx: "Context") -> None:
         hostname = v.string("hostname", required=True, max_len=63, pattern=HOSTNAME_RE)
         tz = v.string("timezone", required=True, max_len=64, pattern=TIMEZONE_RE)
         v.raise_if_errors()
-        if tz not in system.list_timezones():
+        if tz != system.timezone() and tz not in system.list_timezones():
             raise ValidationError({"timezone": "invalid"})
         if not ctx.simulated:
             try:
@@ -721,14 +745,31 @@ def register(router: Router, ctx: "Context") -> None:
 
     def rules_list(req: Request):
         return {"rules": [rule_public(x) for x in db.all("SELECT * FROM notify_rules ORDER BY name")],
-                "event_types": list(EVENT_TYPES)}
+                "event_types": list(EVENT_TYPES), "placeholders": list(PLACEHOLDERS),
+                "defaults": default_templates(req.user["locale"])}
+
+    def rule_preview(req: Request):
+        f = parse_rule({**req.body, "recipients": req.body.get("recipients") or "preview@example.com",
+                        "events": req.body.get("events") or ["created"]})
+        result = ctx.mailer.preview(f, req.user["locale"])
+        to = req.body.get("send_to")
+        if to:
+            v = Validator({"send_to": to})
+            v.email("send_to", required=True)
+            v.raise_if_errors()
+            try:
+                ctx.mailer.send([to], result["subject"], result["text"], html_body=result["html"])
+            except MailError as exc:
+                return {**result, "sent": False, "error": str(exc)}
+            return {**result, "sent": True}
+        return result
 
     def rule_create(req: Request):
         f = parse_rule(req.body)
-        rid = db.run("INSERT INTO notify_rules(name, events, pattern, recipients, mode, digest_minutes, enabled) "
-                     "VALUES(?, ?, ?, ?, ?, ?, ?)",
+        rid = db.run("INSERT INTO notify_rules(name, events, pattern, recipients, mode, digest_minutes, enabled, "
+                     "subject_template, body_template) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
                      (f["name"], f["events"], f["pattern"], f["recipients"], f["mode"], f["digest_minutes"],
-                      f["enabled"]))
+                      f["enabled"], f["subject_template"], f["body_template"]))
         db.audit(req.user, "rule.create", f["name"])
         return 201, {"rule": rule_public(db.one("SELECT * FROM notify_rules WHERE id = ?", (rid,)))}
 
@@ -738,9 +779,9 @@ def register(router: Router, ctx: "Context") -> None:
             raise ApiError(404, "not_found")
         f = parse_rule(req.body)
         db.run("UPDATE notify_rules SET name = ?, events = ?, pattern = ?, recipients = ?, mode = ?, "
-               "digest_minutes = ?, enabled = ? WHERE id = ?",
+               "digest_minutes = ?, enabled = ?, subject_template = ?, body_template = ? WHERE id = ?",
                (f["name"], f["events"], f["pattern"], f["recipients"], f["mode"], f["digest_minutes"],
-                f["enabled"], rid))
+                f["enabled"], f["subject_template"], f["body_template"], rid))
         db.audit(req.user, "rule.update", f["name"])
         return {"rule": rule_public(db.one("SELECT * FROM notify_rules WHERE id = ?", (rid,)))}
 
@@ -758,6 +799,7 @@ def register(router: Router, ctx: "Context") -> None:
     r("PUT", "/smtp", smtp_put, "manager")
     r("POST", "/smtp/test", smtp_test, "manager")
     r("GET", "/rules", rules_list, "manager")
+    r("POST", "/rules/preview", rule_preview, "manager")
     r("POST", "/rules", rule_create, "manager")
     r("PUT", "/rules/{id}", rule_update, "manager")
     r("DELETE", "/rules/{id}", rule_delete, "manager")
@@ -832,3 +874,128 @@ def register(router: Router, ctx: "Context") -> None:
     r("POST", "/system/setup-reset", system_setup_reset, "admin")
     r("GET", "/system/ssh-key", ssh_key_get, "manager")
     r("POST", "/system/ssh-key", ssh_key_generate, "manager")
+
+    # File manager ------------------------------------------------------------
+
+    def browser_get(req: Request):
+        return ctx.browser.state()
+
+    def browser_set(req: Request):
+        mode = req.body.get("mode")
+        if mode not in BROWSER_MODES:
+            raise ValidationError({"mode": "invalid"})
+        if mode == "edit" and not has_role(req.user, "manager"):
+            raise ApiError(403, "forbidden")
+        try:
+            return ctx.browser.set_mode(mode, req.user)
+        except BrowserError as exc:
+            raise ApiError(409, "browser_failed", str(exc)) from exc
+
+    def browser_refresh(req: Request):
+        try:
+            return ctx.browser.refresh()
+        except (GadgetError, CommandError, OSError) as exc:
+            raise ApiError(500, "browser_failed", str(exc)) from exc
+
+    r("GET", "/browser", browser_get, "viewer")
+    r("POST", "/browser", browser_set, "viewer")
+    r("POST", "/browser/refresh", browser_refresh, "viewer")
+
+    # Updates -----------------------------------------------------------------
+
+    def update_get(req: Request):
+        return ctx.updater.status()
+
+    def update_put(req: Request):
+        v = Validator(req.body)
+        repo = v.string("repository", required=True, max_len=201)
+        if repo and not REPO_RE.match(repo):
+            v.errors["repository"] = "invalid"
+        cfg = {"repository": repo, "prereleases": v.boolean("prereleases", True),
+               "auto_check": v.boolean("auto_check", True)}
+        v.raise_if_errors()
+        db.set_setting("update", cfg)
+        db.audit(req.user, "update.settings", repo)
+        return ctx.updater.status()
+
+    def update_action(action: str):
+        def handler(req: Request):
+            try:
+                if action == "check":
+                    return ctx.updater.check()
+                if action == "software":
+                    db.audit(req.user, "update.software")
+                    return ctx.updater.install_software()
+                if action == "os-check":
+                    return ctx.updater.check_os()
+                db.audit(req.user, "update.os")
+                return ctx.updater.install_os()
+            except (UpdateError, CommandError) as exc:
+                raise ApiError(409, "update_failed", str(exc)) from exc
+        return handler
+
+    r("GET", "/update", update_get, "admin")
+    r("PUT", "/update", update_put, "admin")
+    for action in ("check", "software", "os-check", "os"):
+        r("POST", f"/update/{action}", update_action(action), "admin")
+
+    # Backup ------------------------------------------------------------------
+
+    def backup_get(req: Request):
+        status = ctx.backup.status()
+        status["targets"] = [{"id": t["id"], "name": t["name"], "protocol": t["protocol"]}
+                             for t in db.all("SELECT id, name, protocol FROM targets ORDER BY name")]
+        return status
+
+    def backup_put(req: Request):
+        current = ctx.backup.settings()
+        v = Validator(req.body)
+        enabled = v.boolean("enabled", False)
+        target_id = v.integer("target_id", minimum=1, maximum=10**9, default=None)
+        directory = v.remote_path("directory")
+        interval = v.choice("interval", INTERVALS, "daily")
+        hour = v.integer("hour", minimum=0, maximum=23, default=3)
+        passphrase = req.body.get("passphrase")
+        if isinstance(passphrase, str) and passphrase and len(passphrase) < 8:
+            v.errors["passphrase"] = "too_short"
+        if enabled and not target_id:
+            v.errors["target_id"] = "required"
+        if target_id and not db.one("SELECT id FROM targets WHERE id = ?", (target_id,)):
+            v.errors["target_id"] = "invalid"
+        v.raise_if_errors()
+        cfg = {"enabled": enabled, "target_id": target_id, "directory": directory.strip("/"),
+               "interval": interval, "hour": hour, "passphrase": current["passphrase"]}
+        if isinstance(passphrase, str) and passphrase:
+            cfg["passphrase"] = ctx.secrets.encrypt(passphrase)
+        elif req.body.get("clear_passphrase"):
+            cfg["passphrase"] = ""
+        db.set_setting("backup", cfg)
+        db.audit(req.user, "backup.settings", "", f"enabled={enabled} interval={interval}")
+        return backup_get(req)
+
+    def backup_run(req: Request):
+        db.audit(req.user, "backup.run")
+        ctx.backup.run_now()
+        return backup_get(req)
+
+    def backup_export(req: Request):
+        passphrase = req.body.get("passphrase") or ""
+        if not isinstance(passphrase, str) or (passphrase and len(passphrase) < 8):
+            raise ValidationError({"passphrase": "too_short"})
+        db.audit(req.user, "backup.download", "", f"with_secrets={bool(passphrase)}")
+        return {"filename": ctx.backup.filename(), "backup": ctx.backup.export(passphrase)}
+
+    def backup_restore(req: Request):
+        try:
+            result = ctx.backup.restore(req.body.get("backup"), str(req.body.get("passphrase") or ""))
+        except BackupError as exc:
+            raise ApiError(422, str(exc)) from exc
+        db.audit(None, "backup.restore", "", f"by {req.user['username']}")
+        apply_gadget(ctx)
+        return result
+
+    r("GET", "/backup", backup_get, "admin")
+    r("PUT", "/backup", backup_put, "admin")
+    r("POST", "/backup/run", backup_run, "admin")
+    r("POST", "/backup/export", backup_export, "admin")
+    r("POST", "/backup/restore", backup_restore, "admin")

@@ -6,7 +6,8 @@
 #   PORT=9000 ./scripts/dev-server.sh
 #
 # The simulated stick is the folder .dev/lib/usb-sim – copy files into it to
-# simulate recordings. The setup code is printed below.
+# simulate recordings. The setup code is printed below. For the file manager,
+# run ./packaging/fetch-filegator.sh once.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -14,6 +15,10 @@ PORT="${PORT:-8080}"
 export NETUSBFLASH_HOME="$ROOT/.dev"
 export NETUSBFLASH_SIMULATE=1
 export NETUSBFLASH_SOCKET="$NETUSBFLASH_HOME/run/api.sock"
+# File manager: shows the simulated stick; FileGator comes from packaging/fetch-filegator.sh.
+export NETUSBFLASH_BROWSE_DIR="$NETUSBFLASH_HOME/lib/usb-sim"
+export NETUSBFLASH_FILEGATOR_DATA="$NETUSBFLASH_HOME/filegator"
+export NETUSBFLASH_FILEGATOR_DIR="$ROOT/vendor/filegator"
 mkdir -p "$NETUSBFLASH_HOME"
 
 PYTHONPATH="$ROOT/daemon" python3 -m netusbflash --simulate &

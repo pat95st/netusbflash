@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 const ROLE_LEVELS = ['viewer' => 1, 'operator' => 2, 'manager' => 3, 'admin' => 4];
+const PROTOCOLS = ['smb', 'webdav', 'ftp', 'ftps', 'sftp', 'sshfs', 'scp', 'local'];
 
 function api(): ApiClient
 {
@@ -14,15 +15,22 @@ function api(): ApiClient
     return $client;
 }
 
+/** Headers that identify the logged-in user towards the service. */
+function session_headers(): array
+{
+    return [
+        'X-Session-Token' => $_SESSION['token'] ?? null,
+        'X-Client-IP' => $_SERVER['REMOTE_ADDR'] ?? '',
+    ];
+}
+
 /**
- * Call the API as the current user and handle session-level errors centrally.
+ * Call the API as the current user from a page request and handle
+ * session-level errors with a redirect.
  */
 function call(string $method, string $path, ?array $body = null): ApiResponse
 {
-    $response = api()->call($method, $path, $body, [
-        'X-Session-Token' => $_SESSION['token'] ?? null,
-        'X-Client-IP' => $_SERVER['REMOTE_ADDR'] ?? '',
-    ]);
+    $response = api()->call($method, $path, $body, session_headers());
     switch ($response->error()) {
         case 'session_expired':
             unset($_SESSION['token'], $_SESSION['user']);
@@ -31,7 +39,9 @@ function call(string $method, string $path, ?array $body = null): ApiResponse
         case 'setup_required':
             redirect('/setup');
         case 'password_change_required':
-            redirect('/profile');
+            if (!str_starts_with((string) ($_SERVER['REQUEST_URI'] ?? ''), '/profile')) {
+                redirect('/profile');
+            }
     }
     return $response;
 }
@@ -84,14 +94,25 @@ function csrf_field(): string
     return '<input type="hidden" name="_csrf" value="' . e(csrf_token()) . '">';
 }
 
+/** True for the JSON endpoints used by the page scripts. */
+function is_ajax_request(): bool
+{
+    $path = (string) parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
+    return str_starts_with($path, '/ajax/') || str_starts_with($path, '/setup/api/');
+}
+
 function csrf_check(): void
 {
     $sent = (string) ($_POST['_csrf'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
-    if ($sent === '' || !hash_equals(csrf_token(), $sent)) {
-        http_response_code(400);
-        render('error', ['code' => 400, 'message' => t('error.csrf')], 'layout_plain');
-        exit;
+    if ($sent !== '' && hash_equals(csrf_token(), $sent)) {
+        return;
     }
+    if (is_ajax_request()) {
+        json_out(['ok' => false, 'message' => t('error.csrf')], 400);
+    }
+    http_response_code(400);
+    render('error', ['code' => 400, 'message' => t('error.csrf')], 'layout_plain');
+    exit;
 }
 
 function current_user(): ?array
@@ -129,15 +150,53 @@ function require_role(string $role): array
     return $user;
 }
 
+/**
+ * The logged-in user for the file manager, or null.
+ *
+ * Used by nginx's auth subrequest (web/auth/filemanager.php) and the
+ * development router. Checks the session with the service at most every 30
+ * seconds, so a logout, lock or role change takes effect quickly.
+ */
+function filemanager_identity(): ?array
+{
+    $user = current_user();
+    if ($user === null) {
+        return null;
+    }
+    if (time() - (int) ($_SESSION['user_checked'] ?? 0) > 30) {
+        $response = api()->call('GET', '/me', null, session_headers());
+        if (!$response->ok()) {
+            if ($response->error() === 'session_expired') {
+                unset($_SESSION['token'], $_SESSION['user']);
+            }
+            return null;
+        }
+        $_SESSION['user'] = $response->data['user'];
+        $_SESSION['user_checked'] = time();
+        $user = $_SESSION['user'];
+    }
+    if (!empty($user['must_change_pw'])) {
+        return null;
+    }
+    return $user;
+}
+
+/** Form value from a classic POST (login form). */
 function input(string $key, mixed $default = ''): mixed
 {
     $value = $_POST[$key] ?? $default;
     return is_string($value) ? trim($value) : $value;
 }
 
-function checkbox(string $key): bool
+/** Decoded JSON request body of an AJAX call. */
+function json_input(): array
 {
-    return isset($_POST[$key]) && $_POST[$key] !== '0';
+    static $data = null;
+    if ($data === null) {
+        $decoded = json_decode((string) file_get_contents('php://input'), true);
+        $data = is_array($decoded) ? $decoded : [];
+    }
+    return $data;
 }
 
 function error_message(ApiResponse $response): string
@@ -160,58 +219,29 @@ function field_errors(ApiResponse $response): array
     return $out;
 }
 
-/** Bootstrap validation helpers for templates. */
-function invalid(array $errors, string $field): string
+/**
+ * Content Security Policy. Inline styles are only allowed where a page needs
+ * them (the HTML mail editor and its preview); scripts are never inline.
+ */
+function send_csp(bool $inlineStyles = false): void
 {
-    return isset($errors[$field]) ? ' is-invalid' : '';
-}
-
-function feedback(array $errors, string $field): string
-{
-    return isset($errors[$field]) ? '<div class="invalid-feedback">' . e($errors[$field]) . '</div>' : '';
-}
-
-function fmt_bytes(int|float|null $bytes): string
-{
-    if ($bytes === null) {
-        return '–';
-    }
-    $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    $i = 0;
-    while ($bytes >= 1024 && $i < count($units) - 1) {
-        $bytes /= 1024;
-        $i++;
-    }
-    return ($i === 0 ? (string) (int) $bytes : number_format($bytes, 1, I18n::locale() === 'de' ? ',' : '.', '')) . ' ' . $units[$i];
-}
-
-function fmt_time(int|float|null $timestamp): string
-{
-    if (!$timestamp) {
-        return '–';
-    }
-    return date(I18n::locale() === 'de' ? 'd.m.Y H:i:s' : 'Y-m-d H:i:s', (int) $timestamp);
-}
-
-function fmt_duration(int|float|null $seconds): string
-{
-    if ($seconds === null) {
-        return '–';
-    }
-    $seconds = (int) $seconds;
-    $d = intdiv($seconds, 86400);
-    $h = intdiv($seconds % 86400, 3600);
-    $m = intdiv($seconds % 3600, 60);
-    return ($d ? $d . 'd ' : '') . sprintf('%02d:%02d', $h, $m);
+    $style = $inlineStyles ? "'self' 'unsafe-inline'" : "'self'";
+    header("Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src {$style}; "
+        . "script-src 'self'; font-src 'self'; frame-src 'self'; frame-ancestors 'none'; form-action 'self'", true);
 }
 
 function render(string $template, array $vars = [], string $layout = 'layout'): void
 {
+    if (!empty($vars['inline_styles'])) {
+        send_csp(true);
+    }
     extract($vars, EXTR_SKIP);
     ob_start();
     require APP_ROOT . '/templates/' . $template . '.php';
     $content = ob_get_clean();
     $title = $vars['title'] ?? 'NetUSBFlash';
+    $scripts = $vars['scripts'] ?? [];
+    $styles = $vars['styles'] ?? [];
     require APP_ROOT . '/templates/' . $layout . '.php';
 }
 
@@ -219,6 +249,7 @@ function json_out(array $data, int $status = 200): never
 {
     http_response_code($status);
     header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
     echo json_encode($data, JSON_UNESCAPED_UNICODE);
     exit;
 }
@@ -228,42 +259,38 @@ function is_post(): bool
     return ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST';
 }
 
-function usb_state_label(array $usb): string
-{
-    $state = $usb['state'] ?? [];
-    if (empty($usb['enabled'])) {
-        return t('usb.state_disabled');
-    }
-    if (empty($usb['image']['exists'])) {
-        return t('usb.state_no_image');
-    }
-    if (empty($state['attached'])) {
-        return t('usb.state_detached');
-    }
-    return !empty($state['host_connected']) ? t('usb.state_connected') : t('usb.state_waiting_host');
-}
-
-function usb_state_class(array $usb): string
-{
-    $state = $usb['state'] ?? [];
-    if (empty($usb['enabled']) || empty($usb['image']['exists'])) {
-        return 'secondary';
-    }
-    if (empty($state['attached'])) {
-        return 'warning';
-    }
-    return !empty($state['host_connected']) ? 'success' : 'info';
-}
-
-function upload_status_badge(string $status): string
-{
-    $class = ['pending' => 'info', 'done' => 'success', 'failed' => 'danger', 'discarded' => 'secondary'][$status] ?? 'secondary';
-    return '<span class="badge text-bg-' . $class . '">' . e(t('upload.status_' . $status)) . '</span>';
-}
-
 function nav_active(string $path): string
 {
     $current = rtrim((string) parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH), '/') ?: '/';
     $active = $path === '/' ? $current === '/' : str_starts_with($current, $path);
     return $active ? ' active" aria-current="page' : '';
+}
+
+/** Render a <select>'s options. */
+function select_options(array $options, string|int|null $selected = null): string
+{
+    $html = '';
+    foreach ($options as $value => $label) {
+        $sel = $selected !== null && (string) $value === (string) $selected ? ' selected' : '';
+        $html .= '<option value="' . e($value) . '"' . $sel . '>' . e($label) . '</option>';
+    }
+    return $html;
+}
+
+function checked(mixed $value): string
+{
+    return $value ? ' checked' : '';
+}
+
+/** Disabled attribute for form fields the current user may not change. */
+function readonly_unless(string $role): string
+{
+    return has_role($role) ? '' : ' disabled';
+}
+
+/** Translations as JSON for assets/js/app.js (English fallback included). */
+function i18n_json(): string
+{
+    $strings = array_merge(I18n::load('en'), I18n::load(I18n::locale()));
+    return (string) json_encode($strings, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP);
 }

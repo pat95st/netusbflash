@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-MAX_BODY = 1024 * 1024
+MAX_BODY = 4 * 1024 * 1024  # settings backups can be larger than ordinary requests
 
 
 class ApiError(Exception):

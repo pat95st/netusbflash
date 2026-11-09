@@ -155,17 +155,58 @@ Under **Notifications** (role Manager or Administrator):
 Emails are written in the recipient's language if the address belongs to a
 user, otherwise in English. Failed emails are retried automatically.
 
-## Step 7: Users and roles
+Each rule can have its own **subject** and **text**. The text is edited in a
+rich-text editor and sent as HTML (with a plain-text version). Placeholders
+are replaced when the mail is sent; click one below the editor to insert it:
+
+| Placeholder | Content |
+| --- | --- |
+| `{{host}}`, `{{rule}}` | device name, rule name |
+| `{{count}}` | number of reported files |
+| `{{date}}`, `{{time}}`, `{{version}}` | date and time of sending, NetUSBFlash version |
+| `{{files}}` | list of all events (event, file, time) |
+| `{{file_names}}` | file names, comma separated |
+| `{{created_count}}` … `{{failed_count}}` | number of new, changed, deleted, uploaded, failed files |
+| `{{created_list}}` … `{{failed_list}}` | the same as lists |
+
+Leave the subject or the text empty to use the built-in default. **Preview**
+shows the mail with example files and can send it as a test.
+
+## Step 7: File manager
+
+**Files** shows the contents of the USB stick in the browser (FileGator).
+
+- **View** (all roles): read-only; the console keeps working. **Reload** shows
+  files the console wrote since. Files can be downloaded singly or as a zip.
+- **Edit** (Manager, Administrator): the stick is disconnected from the
+  console, so files can be uploaded, renamed, moved or deleted. Leave the edit
+  mode with **View** or **Close**; it ends automatically after 30 minutes.
+  Changes made here are picked up like recordings (and uploaded if they match
+  a target). Do not use the edit mode during a recording.
+
+## Step 8: Backup
+
+Under **Administration → Backup**:
+
+- **Download backup** saves all settings, targets, notification rules and
+  users as a JSON file. With a passphrase, the stored passwords are included
+  (encrypted); without one they are left out.
+- **Automatic backup** uploads a backup daily, weekly or monthly to one of the
+  storage targets, into its own folder (default `netusbflash-backups`).
+- **Restore** replaces the current configuration with a backup. Everyone is
+  logged out afterwards. Recordings and the USB image are not part of a backup.
+
+## Step 9: Users and roles
 
 Administrators add users under **Users**. A temporary password is shown once;
 the user must change it at the first login.
 
 | Role | May |
 | --- | --- |
-| Viewer | see dashboard, files, uploads and logs |
+| Viewer | see dashboard, files (read-only file manager), uploads and logs |
 | Operator | + start a check, connect/disconnect the stick, retry uploads |
-| Manager | + manage targets, USB settings and notifications |
-| Administrator | + users, recreating the USB image, system settings |
+| Manager | + manage targets, USB settings and notifications, edit files on the stick |
+| Administrator | + users, recreating the USB image, system settings, updates, backup |
 
 After five wrong passwords an account is locked for 15 minutes; administrators
 can unlock it earlier.
@@ -181,6 +222,8 @@ can unlock it earlier.
 | Files are not picked up | The console may still be writing; increase *Wait after last write*. Check include/exclude patterns. Use **Check for new files** on the USB stick page. |
 | Connection test fails | Check address, port, user, password; for FTPS/WebDAV the certificate; for SFTP/SCP that the public key is on the server. |
 | No emails | Send a test email; the error is shown under *Recent emails*. |
+| File manager shows "not installed" | Run `sudo ./packaging/install.sh --upgrade` from a release or a checkout with internet access (it downloads FileGator). |
+| An update fails | The update log under **Administration → Updates** shows the output; the full log is `/var/lib/netusbflash/updates/update.log`. |
 | Setup code lost | `sudo netusbflash-cli setup show-code` |
 | Administrator password lost | `sudo netusbflash-cli user reset-password <username>` |
 | Start over | **System → Run setup again**, or `sudo netusbflash-cli setup reset` |
@@ -194,6 +237,19 @@ sudo tail -f /var/log/nginx/error.log    # web server errors
 
 ## Updating
 
+Under **Administration → Updates**:
+
+- **NetUSBFlash**: *Check for updates* looks for a newer release on GitHub
+  (daily by default; pre-releases can be included). *Install* downloads it,
+  verifies the checksum and installs it. The page reloads when the new version
+  is running.
+- **Operating system**: *Check* lists the available package updates of
+  Raspberry Pi OS; *Install updates* runs `apt-get full-upgrade`. If a restart
+  is needed, the page says so and offers a button for it.
+
+The progress is shown in the update log on the same page. Without internet
+access, or from a git checkout, you can still update by hand:
+
 ```bash
 cd ~/netusbflash
 git pull
@@ -201,7 +257,8 @@ sudo ./packaging/install.sh --upgrade
 ```
 
 Settings, users, targets and the USB image are kept. The stick is disconnected
-from the console for a few seconds while the service restarts.
+from the console for a few seconds while the service restarts. How releases are
+made is described in [releasing.md](releasing.md).
 
 ## Uninstalling
 
@@ -222,3 +279,7 @@ Files already uploaded to your targets are never deleted.
 | `/var/lib/netusbflash/usb.img` | the emulated USB stick |
 | `/var/lib/netusbflash/spool` | copies of recordings waiting for upload |
 | `/var/lib/netusbflash/ssh` | SSH key and known hosts for SFTP/SCP targets |
+| `/var/lib/netusbflash/updates` | downloaded releases and the update log |
+| `/opt/netusbflash/filegator` | the file manager (FileGator) |
+| `/srv/netusbflash/usb-stick` | mount point of the USB image while the file manager is open |
+| `/var/cache/netusbflash/filegator` | file manager sessions and temporary upload chunks |

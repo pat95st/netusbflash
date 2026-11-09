@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (
@@ -168,7 +168,16 @@ class Database:
         conn = self.conn()
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(SCHEMA)
+        # Version 2: editable notification templates and HTML mails.
+        self._add_column("notify_rules", "subject_template", "TEXT NOT NULL DEFAULT ''")
+        self._add_column("notify_rules", "body_template", "TEXT NOT NULL DEFAULT ''")
+        self._add_column("mail_queue", "html", "TEXT NOT NULL DEFAULT ''")
         self.set_setting("schema_version", SCHEMA_VERSION)
+
+    def _add_column(self, table: str, column: str, definition: str) -> None:
+        columns = {row[1] for row in self.conn().execute(f"PRAGMA table_info({table})")}
+        if column not in columns:
+            self.conn().execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def all(self, sql: str, params: tuple | list = ()) -> list[dict[str, Any]]:
         return [dict(row) for row in self.conn().execute(sql, params).fetchall()]

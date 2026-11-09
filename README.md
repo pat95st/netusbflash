@@ -38,10 +38,18 @@ NetUSBFlash uploads every new recording to your storage over SMB/CIFS, WebDAV
   from the local network only.
 - **Users with four roles**: viewer, operator, manager, administrator.
 - **Setup wizard** for the first start, protected by a one-time code.
+- **File manager** for the stick contents in the browser
+  ([FileGator](https://filegator.io)): read-only while the console is connected,
+  editable on request.
+- **Custom notification mails**: subject and HTML text per rule, edited in a
+  rich-text editor, with placeholders and a preview.
+- **Updates** of NetUSBFlash (from GitHub releases) and of Raspberry Pi OS from
+  the web interface.
+- **Backup** of the configuration: download, restore, and scheduled upload to
+  a storage target.
 
 Not yet included: sharing the stick contents on the network (SMB/NFS/WebDAV
-server), configuration backup/restore, MTP mode, a `.deb` package. See the
-[roadmap](#roadmap).
+server), MTP mode, a `.deb` package. See the [roadmap](#roadmap).
 
 ## Hardware
 
@@ -85,6 +93,7 @@ You need Python 3.11+ with the `cryptography` package and PHP 8.2+ with the
 with a folder.
 
 ```bash
+./packaging/fetch-filegator.sh   # once: the file manager (not in the repository)
 ./scripts/dev-server.sh          # service + UI on http://127.0.0.1:8080
 ```
 
@@ -95,6 +104,7 @@ Tests:
 ```bash
 cd daemon && python3 -m unittest discover -s tests
 php web/tests/check_lang.php
+node web/tests/e2e.js            # browser test against a fresh dev instance (needs Playwright)
 ```
 
 More in [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/architecture.md](docs/architecture.md).
@@ -104,20 +114,23 @@ More in [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/architecture.md](docs/archi
 ```
 daemon/       Python service (runs as root): USB gadget, detection, uploads, email, API
 web/          PHP web interface (runs as www-data), Bootstrap 5, EN/DE language files
-packaging/    install.sh, systemd units, nginx and firewall configuration
+packaging/    install.sh, systemd units, nginx and firewall configuration, vendor download scripts
+vendor/       FileGator (downloaded, not committed)
+.github/      release workflow
 scripts/      development helpers
-docs/         setup guide, architecture, API
+docs/         setup guide, architecture, API, releasing
 ```
 
 ## Roadmap
 
 1. Tests on Pi Zero 2 W, Pi 4 and Pi 5 with real mixing consoles
 2. Optional network share of the stick contents (SMB, NFS, WebDAV), off by default
-3. Configuration backup and restore
-4. Host key verification for SFTP/SSHFS targets (currently trust on first use only for SCP)
-5. `.deb` package and signed releases
+3. Host key verification for SFTP/SSHFS targets (currently trust on first use only for SCP)
+4. `.deb` package and signed releases
 
 ## License
 
 Not decided yet. Bootstrap and Bootstrap Icons (in `web/public/assets/vendor`)
-are MIT licensed.
+are MIT licensed, Quill (same folder) is BSD-3-Clause licensed, and FileGator
+(downloaded into `vendor/filegator`, bundled in release archives) is MIT
+licensed.

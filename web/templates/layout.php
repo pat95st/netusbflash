@@ -20,6 +20,7 @@ require __DIR__ . '/head.php';
             <ul class="navbar-nav me-auto">
                 <li class="nav-item"><a class="nav-link<?= nav_active('/') ?>" href="/"><?= e(t('nav.dashboard')) ?></a></li>
                 <li class="nav-item"><a class="nav-link<?= nav_active('/usb') ?>" href="/usb"><?= e(t('nav.usb')) ?></a></li>
+                <li class="nav-item"><a class="nav-link<?= nav_active('/files') ?>" href="/files"><?= e(t('nav.files')) ?></a></li>
                 <li class="nav-item"><a class="nav-link<?= nav_active('/targets') ?>" href="/targets"><?= e(t('nav.targets')) ?></a></li>
                 <li class="nav-item"><a class="nav-link<?= nav_active('/uploads') ?>" href="/uploads"><?= e(t('nav.uploads')) ?></a></li>
                 <?php if (has_role('manager')): ?>
@@ -27,8 +28,16 @@ require __DIR__ . '/head.php';
                 <?php endif; ?>
                 <li class="nav-item"><a class="nav-link<?= nav_active('/logs') ?>" href="/logs"><?= e(t('nav.logs')) ?></a></li>
                 <?php if (has_role('admin')): ?>
-                <li class="nav-item"><a class="nav-link<?= nav_active('/users') ?>" href="/users"><?= e(t('nav.users')) ?></a></li>
-                <li class="nav-item"><a class="nav-link<?= nav_active('/system') ?>" href="/system"><?= e(t('nav.system')) ?></a></li>
+                <?php $adminActive = array_filter(['/users', '/system', '/updates', '/backup'], fn($p) => nav_active($p) !== ''); ?>
+                <li class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle<?= $adminActive ? ' active' : '' ?>" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><?= e(t('nav.admin')) ?></a>
+                    <ul class="dropdown-menu">
+                        <li><a class="dropdown-item<?= nav_active('/users') ?>" href="/users"><?= e(t('nav.users')) ?></a></li>
+                        <li><a class="dropdown-item<?= nav_active('/system') ?>" href="/system"><?= e(t('nav.system')) ?></a></li>
+                        <li><a class="dropdown-item<?= nav_active('/updates') ?>" href="/updates"><?= e(t('nav.updates')) ?></a></li>
+                        <li><a class="dropdown-item<?= nav_active('/backup') ?>" href="/backup"><?= e(t('nav.backup')) ?></a></li>
+                    </ul>
+                </li>
                 <?php endif; ?>
             </ul>
             <ul class="navbar-nav">
@@ -54,8 +63,10 @@ require __DIR__ . '/head.php';
     </div>
 </nav>
 
-<main class="container-xl py-4">
+<main class="container-xl py-4 page-main">
+    <?php if (!empty($scripts)) { require __DIR__ . '/loading.php'; } ?>
     <?php require __DIR__ . '/flashes.php'; ?>
+    <div data-notices></div>
     <?= $content ?>
 </main>
 
@@ -69,5 +80,8 @@ require __DIR__ . '/head.php';
 </footer>
 <script src="/assets/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
 <script src="/assets/js/app.js"></script>
+<?php foreach ($scripts as $script): ?>
+<script src="<?= e($script) ?>"></script>
+<?php endforeach; ?>
 </body>
 </html>

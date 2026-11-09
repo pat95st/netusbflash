@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Download Bootstrap and Bootstrap Icons into web/public/assets/vendor.
+# Download Bootstrap, Bootstrap Icons and Quill into web/public/assets/vendor.
 #
 # The web UI loads these files from the Pi itself (no CDN), so it also works
 # without internet access. The files are committed to the repository; run this
@@ -11,6 +11,7 @@ set -euo pipefail
 
 BOOTSTRAP_VERSION="5.3.3"
 ICONS_VERSION="1.11.3"
+QUILL_VERSION="1.3.7"   # rich text editor for HTML mail templates (BSD-3-Clause)
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENDOR="$ROOT/web/public/assets/vendor"
@@ -18,7 +19,8 @@ FORCE=0
 [ "${1:-}" = "--force" ] && FORCE=1
 
 if [ "$FORCE" = 0 ] && [ -f "$VENDOR/bootstrap/css/bootstrap.min.css" ] \
-    && [ -f "$VENDOR/bootstrap-icons/font/bootstrap-icons.min.css" ]; then
+    && [ -f "$VENDOR/bootstrap-icons/font/bootstrap-icons.min.css" ] \
+    && [ -f "$VENDOR/quill/quill.min.js" ]; then
     echo "Vendor files already present (use --force to download again)."
     exit 0
 fi
@@ -35,7 +37,11 @@ curl -fsSL -o "$TMP/bootstrap.zip" \
 echo "Downloading Bootstrap Icons $ICONS_VERSION ..."
 curl -fsSL -o "$TMP/icons.zip" \
     "https://github.com/twbs/icons/releases/download/v$ICONS_VERSION/bootstrap-icons-$ICONS_VERSION.zip"
+echo "Downloading Quill $QUILL_VERSION ..."
+curl -fsSL -o "$TMP/quill.tar.gz" \
+    "https://github.com/quilljs/quill/releases/download/v$QUILL_VERSION/quill.tar.gz"
 unzip -q "$TMP/bootstrap.zip" -d "$TMP"
+tar -xzf "$TMP/quill.tar.gz" -C "$TMP"
 unzip -q "$TMP/icons.zip" -d "$TMP"
 
 B="$TMP/bootstrap-$BOOTSTRAP_VERSION-dist"
@@ -46,25 +52,29 @@ LICENSES="$(cd "$VENDOR" && pwd)"
 mkdir -p "$TMP/keep"
 cp "$VENDOR/bootstrap/LICENSE" "$TMP/keep/bootstrap-LICENSE" 2>/dev/null || true
 cp "$VENDOR/bootstrap-icons/LICENSE" "$TMP/keep/icons-LICENSE" 2>/dev/null || true
+cp "$VENDOR/quill/LICENSE" "$TMP/keep/quill-LICENSE" 2>/dev/null || true
 
-rm -rf "$VENDOR/bootstrap" "$VENDOR/bootstrap-icons"
-mkdir -p "$VENDOR/bootstrap/css" "$VENDOR/bootstrap/js" "$VENDOR/bootstrap-icons/font/fonts"
+rm -rf "$VENDOR/bootstrap" "$VENDOR/bootstrap-icons" "$VENDOR/quill"
+mkdir -p "$VENDOR/bootstrap/css" "$VENDOR/bootstrap/js" "$VENDOR/bootstrap-icons/font/fonts" "$VENDOR/quill"
 cp "$B/css/bootstrap.min.css" "$B/css/bootstrap.min.css.map" "$VENDOR/bootstrap/css/"
 cp "$B/js/bootstrap.bundle.min.js" "$B/js/bootstrap.bundle.min.js.map" "$VENDOR/bootstrap/js/"
 cp "$I/bootstrap-icons.min.css" "$VENDOR/bootstrap-icons/font/"
 cp "$I/fonts/bootstrap-icons.woff2" "$I/fonts/bootstrap-icons.woff" "$VENDOR/bootstrap-icons/font/fonts/"
 cp "$TMP/keep/bootstrap-LICENSE" "$VENDOR/bootstrap/LICENSE" 2>/dev/null || true
 cp "$TMP/keep/icons-LICENSE" "$VENDOR/bootstrap-icons/LICENSE" 2>/dev/null || true
+cp "$TMP/quill/quill.min.js" "$TMP/quill/quill.snow.css" "$VENDOR/quill/"
+cp "$TMP/keep/quill-LICENSE" "$VENDOR/quill/LICENSE" 2>/dev/null || true
 
 cat > "$LICENSES/VERSIONS" <<EOF
 bootstrap $BOOTSTRAP_VERSION
 bootstrap-icons $ICONS_VERSION
+quill $QUILL_VERSION
 EOF
 if command -v sha256sum >/dev/null; then
     SHA="sha256sum"
 else
     SHA="shasum -a 256"  # macOS
 fi
-(cd "$VENDOR" && find bootstrap bootstrap-icons -type f | sort | xargs $SHA > SHA256SUMS)
+(cd "$VENDOR" && find bootstrap bootstrap-icons quill -type f | sort | xargs $SHA > SHA256SUMS)
 
 echo "Done. Files are in $VENDOR"
