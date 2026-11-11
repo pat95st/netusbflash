@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Audio conversion before upload (new page "Conversion"): rules convert recordings of chosen file types (e.g. WAV, AIFF) to FLAC, MP3 or AAC (.m4a) with ffmpeg; bitrate (CBR/VBR for MP3), FLAC compression level and bit depth, sample rate and channels are configurable; the original can be uploaded as well; if a conversion fails, the original is uploaded instead. The installer now installs `ffmpeg`.
 - File manager for the USB stick contents (FileGator, under /fm/, login shared with NetUSBFlash): read-only view while the host is connected, edit mode for managers that disconnects the host (30-minute timeout)
 - Notification rules: custom subject and HTML text with placeholders, rich-text editor (Quill), preview and test mail; mails are sent as HTML with a plain-text part
 - Updates page: NetUSBFlash updates from GitHub releases (checksum-verified, optional pre-releases, daily check) and Raspberry Pi OS package updates, with live log

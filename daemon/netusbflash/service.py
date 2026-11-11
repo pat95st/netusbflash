@@ -16,6 +16,7 @@ from .auth import AuthService
 from .backup import BackupService
 from .browser import FileBrowser
 from .config import Paths, load_paths, simulate
+from .converter import Converter
 from .crypto import SecretBox
 from .db import Database
 from .gadget import DEFAULT_USB, GadgetBackend, GadgetError, make_gadget
@@ -47,6 +48,7 @@ class Context:
         self.notifier = Notifier(self)
         self.mailer = Mailer(self)
         self.uploader = Uploader(self)
+        self.converter = Converter(self)
         self.monitor = Monitor(self)
         self.browser = FileBrowser(self)
         self.updater = Updater(self)
@@ -54,7 +56,7 @@ class Context:
 
     @property
     def workers(self) -> tuple:
-        return (self.monitor, self.uploader, self.mailer, self.browser, self.updater, self.backup)
+        return (self.monitor, self.converter, self.uploader, self.mailer, self.browser, self.updater, self.backup)
 
     def usb_settings(self) -> dict[str, Any]:
         return self.db.get_dict_setting("usb", DEFAULT_USB)

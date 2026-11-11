@@ -76,7 +76,7 @@ install_packages() {
     apt-get install -y -q --no-install-recommends \
         python3 python3-cryptography \
         nginx php-fpm php-curl php-mbstring \
-        rclone exfatprogs dosfstools fdisk util-linux \
+        rclone exfatprogs dosfstools fdisk util-linux ffmpeg \
         openssh-client sshpass \
         nftables avahi-daemon openssl curl unzip ca-certificates
 }

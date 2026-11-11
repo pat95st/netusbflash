@@ -99,6 +99,8 @@ sudo curl -s --unix-socket /run/netusbflash/api.sock http://localhost/api/v1/hea
 | POST | `/api/v1/update/software` | admin |
 | POST | `/api/v1/update/os-check` | admin |
 | POST | `/api/v1/update/os` | admin |
+| GET | `/api/v1/conversion` | viewer |
+| PUT | `/api/v1/conversion` | manager |
 | GET | `/api/v1/backup` | admin |
 | PUT | `/api/v1/backup` | admin |
 | POST | `/api/v1/backup/run` | admin |
@@ -124,3 +126,13 @@ sudo curl -s --unix-socket /run/netusbflash/api.sock http://localhost/api/v1/hea
   replaces settings, targets, rules and users and ends all sessions. Error
   codes: `invalid_backup`, `backup_too_new`, `backup_without_admin`,
   `passphrase_required`, `wrong_passphrase`.
+- `PUT /conversion` takes `{"enabled": bool, "rules": [...]}`. Each rule has
+  `enabled`, `extensions` (list or comma-separated text, e.g. `"wav, aiff"`),
+  `format` (`flac`, `mp3`, `aac`), `bitrate` (kbit/s, MP3 CBR and AAC),
+  `mp3_mode` (`cbr`, `vbr`), `vbr_quality` (0–9), `flac_level` (0–8),
+  `bit_depth` (0 = keep, 16, 24; FLAC only), `sample_rate` (0 = keep, or Hz),
+  `channels` (0 = keep, 1, 2) and `keep_original`. The first enabled rule whose
+  extensions match is used; an extension may appear in only one enabled rule.
+  Field errors are reported as `rules.<index>.<field>`. `GET /conversion`
+  also returns the allowed values (`choices`), whether ffmpeg is installed
+  and the conversion queue.

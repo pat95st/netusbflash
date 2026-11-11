@@ -32,6 +32,10 @@ NetUSBFlash uploads every new recording to your storage over SMB/CIFS, WebDAV
 - **Uploads** to any number of targets, with retries and backoff, include/exclude
   patterns, date-based subfolders, bandwidth limits and optional deletion from
   the stick after a successful upload.
+- **Audio conversion** before the upload: recordings of selected file types
+  (e.g. WAV) are converted to FLAC, MP3 or AAC with ffmpeg, with configurable
+  bitrate, sample rate, channels, FLAC compression and bit depth. The file on
+  the stick stays unchanged.
 - **Email notifications** via SMTP for new, changed and deleted files and for
   successful or failed uploads, instantly or as a digest, in English or German.
 - **Web interface** in English and German (Bootstrap 5, served locally), reachable
