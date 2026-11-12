@@ -24,6 +24,7 @@ $routes = [
     '#^/targets$#' => 'targets',
     '#^/targets/(new|\d+)$#' => 'target_form',
     '#^/uploads$#' => 'uploads',
+    '#^/conversion$#' => 'conversion',
     '#^/notifications$#' => 'notifications',
     '#^/users$#' => 'users',
     '#^/profile$#' => 'profile',

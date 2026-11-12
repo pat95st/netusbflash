@@ -5,7 +5,7 @@ $user = current_user();
 require __DIR__ . '/head.php';
 ?>
 <body>
-<nav class="navbar navbar-expand-lg border-bottom bg-body-tertiary">
+<nav class="navbar navbar-expand-xl border-bottom bg-body-tertiary">
     <div class="container-xl">
         <a class="navbar-brand d-flex align-items-center gap-2" href="/">
             <img src="/assets/img/icon.svg" alt="" width="26" height="26">
@@ -17,12 +17,13 @@ require __DIR__ . '/head.php';
             <span class="navbar-toggler-icon"></span>
         </button>
         <div class="collapse navbar-collapse" id="mainNav">
-            <ul class="navbar-nav me-auto">
+            <ul class="navbar-nav me-auto text-nowrap">
                 <li class="nav-item"><a class="nav-link<?= nav_active('/') ?>" href="/"><?= e(t('nav.dashboard')) ?></a></li>
                 <li class="nav-item"><a class="nav-link<?= nav_active('/usb') ?>" href="/usb"><?= e(t('nav.usb')) ?></a></li>
                 <li class="nav-item"><a class="nav-link<?= nav_active('/files') ?>" href="/files"><?= e(t('nav.files')) ?></a></li>
                 <li class="nav-item"><a class="nav-link<?= nav_active('/targets') ?>" href="/targets"><?= e(t('nav.targets')) ?></a></li>
                 <li class="nav-item"><a class="nav-link<?= nav_active('/uploads') ?>" href="/uploads"><?= e(t('nav.uploads')) ?></a></li>
+                <li class="nav-item"><a class="nav-link<?= nav_active('/conversion') ?>" href="/conversion"><?= e(t('nav.conversion')) ?></a></li>
                 <?php if (has_role('manager')): ?>
                 <li class="nav-item"><a class="nav-link<?= nav_active('/notifications') ?>" href="/notifications"><?= e(t('nav.notifications')) ?></a></li>
                 <?php endif; ?>

@@ -84,6 +84,7 @@ everywhere. The preview is shown in a sandboxed `iframe` without scripts.
 | `gadget.py` | USB mass-storage gadget via configfs; disk image creation; simulated gadget for development |
 | `monitor.py` | idle detection, scanning the stick, file index, queueing uploads |
 | `uploader.py` | upload queue with retries and backoff |
+| `converter.py` | conversion rules and the ffmpeg worker that converts recordings (FLAC, MP3, AAC) before the upload |
 | `transports.py` | protocol backends: rclone (SMB, WebDAV, FTP/FTPS, SFTP/SSHFS), OpenSSH scp, local copy |
 | `mailer.py` | notification rules, templates and placeholders, digests, SMTP client, mail queue |
 | `htmlsafe.py` | allow-list HTML sanitiser for mail templates |
@@ -106,6 +107,13 @@ everywhere. The preview is shown in a sandboxed `iframe` without scripts.
 4. New and changed files are copied to `spool/<event id>/` and one upload row
    per enabled target is queued; deleted files are recorded as events.
 5. The gadget is bound again; the console sees the stick again.
+   If a conversion rule matches the file type, the event is marked for
+   conversion and the uploads point at the converted file. The converter
+   thread runs ffmpeg on the spool copy (after the stick is back with the
+   console) and writes `spool/<event id>/converted/<name>.<flac|mp3|m4a>`;
+   the uploader holds those uploads until then. If ffmpeg fails, the original
+   is uploaded instead (or, with "also upload the original", the converted
+   uploads are marked failed and a retry converts again).
 6. The uploader sends each queued file with rclone or scp. On success the spool
    copy is removed once all targets are done; on failure it retries with
    exponential backoff (max. 10 tries).

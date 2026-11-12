@@ -30,6 +30,7 @@ $dynamic = [
     'usb.done_' => ['sync', 'attach', 'detach'],
     'usb.sync_' => ['detach', 'live', 'detach_help', 'live_help'],
     'system.' => ['reboot_started', 'poweroff_started'],
+    'conversion.format_help_' => ['flac', 'mp3', 'aac'],
 ];
 foreach ($dynamic as $prefix => $suffixes) {
     foreach ($suffixes as $suffix) {

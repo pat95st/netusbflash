@@ -17,6 +17,7 @@ host again.
 from __future__ import annotations
 
 import fnmatch
+import json
 import logging
 import os
 import shutil
@@ -25,6 +26,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .converter import output_path
 from .gadget import DEFAULT_USB, GadgetError
 from .system import CommandError
 from .transports import remote_relative
@@ -268,13 +270,28 @@ class Monitor(threading.Thread):
         shutil.copy2(root / path, spool_file)
         hostname = self.ctx.hostname()
         now = time.time()
+        rule = self.ctx.converter.rule_for(path)
         with db.transaction() as conn:
             conn.execute("UPDATE file_events SET spool_path = ? WHERE id = ?", (str(spool_file), event_id))
+            if rule is not None:
+                conn.execute("UPDATE file_events SET convert_status = 'pending', convert_options = ? WHERE id = ?",
+                             (json.dumps(rule), event_id))
             for target in targets:
                 target_view = self.ctx.target_view(target)
-                rel = remote_relative(target_view, path, now, hostname)
-                conn.execute(
-                    "INSERT INTO uploads(event_id, target_id, remote_path, created_at) VALUES(?, ?, ?, ?)",
-                    (event_id, target["id"], rel, now),
-                )
+                if rule is None or rule["keep_original"]:
+                    rel = remote_relative(target_view, path, now, hostname)
+                    conn.execute(
+                        "INSERT INTO uploads(event_id, target_id, remote_path, created_at) VALUES(?, ?, ?, ?)",
+                        (event_id, target["id"], rel, now),
+                    )
+                if rule is not None:
+                    converted = output_path(path, rule["format"])
+                    rel = remote_relative(target_view, converted, now, hostname)
+                    conn.execute(
+                        "INSERT INTO uploads(event_id, target_id, remote_path, local_name, created_at) "
+                        "VALUES(?, ?, ?, ?, ?)",
+                        (event_id, target["id"], rel, "converted/" + converted.rsplit("/", 1)[-1], now),
+                    )
+        if rule is not None:
+            self.ctx.converter.wake()
         self.ctx.uploader.wake()

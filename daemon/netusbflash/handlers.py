@@ -9,6 +9,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from . import __version__, system
+from . import converter as conv
 from .api import ApiError, Request, Router
 from .auth import LOCALES, ROLES, AuthError, generate_password, has_role, public_user, verify_password
 from .gadget import DEFAULT_USB, FILESYSTEMS, SYNC_MODES, GadgetError
@@ -531,6 +532,7 @@ def register(router: Router, ctx: "Context") -> None:
             },
             "uploads": {"pending": counts.get("pending", 0), "failed": counts.get("failed", 0),
                         "done": counts.get("done", 0), "current": current},
+            "conversion": {"enabled": ctx.converter.settings()["enabled"], **ctx.converter.queue_info()},
             "targets": db.scalar("SELECT COUNT(*) FROM targets WHERE enabled = 1") or 0,
             "mail_configured": ctx.mailer.configured(),
             "mail_queue": db.scalar("SELECT COUNT(*) FROM mail_queue WHERE sent_at IS NULL") or 0,
@@ -900,6 +902,34 @@ def register(router: Router, ctx: "Context") -> None:
     r("GET", "/browser", browser_get, "viewer")
     r("POST", "/browser", browser_set, "viewer")
     r("POST", "/browser/refresh", browser_refresh, "viewer")
+
+    # Audio conversion --------------------------------------------------------
+
+    def conversion_get(req: Request):
+        return {
+            "settings": ctx.converter.settings(),
+            "default_rule": conv.DEFAULT_RULE,
+            "available": ctx.converter.available(),
+            "ffmpeg_version": ctx.converter.ffmpeg_version() if ctx.converter.available() else "",
+            "choices": {
+                "formats": list(conv.FORMATS), "extensions": conv.EXTENSIONS,
+                "mp3_bitrates": list(conv.MP3_BITRATES), "aac_bitrates": list(conv.AAC_BITRATES),
+                "sample_rates": list(conv.SAMPLE_RATES), "max_sample_rate": conv.MAX_SAMPLE_RATE,
+                "bit_depths": list(conv.BIT_DEPTHS), "channels": list(conv.CHANNELS),
+                "max_rules": conv.MAX_RULES,
+            },
+            "queue": ctx.converter.queue_info(),
+        }
+
+    def conversion_put(req: Request):
+        cfg = conv.parse_settings(req.body)
+        db.set_setting("conversion", cfg)
+        summary = "; ".join(f"{','.join(r['extensions'])} -> {conv.describe(r)}" for r in cfg["rules"])
+        db.audit(req.user, "conversion.update", "", f"enabled={cfg['enabled']} {summary}")
+        return conversion_get(req)
+
+    r("GET", "/conversion", conversion_get, "viewer")
+    r("PUT", "/conversion", conversion_put, "manager")
 
     # Updates -----------------------------------------------------------------
 

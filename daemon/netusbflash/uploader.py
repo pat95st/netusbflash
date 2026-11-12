@@ -26,6 +26,14 @@ def backoff(attempts: int) -> float:
     return min(60 * (2 ** max(attempts - 1, 0)), 1800)
 
 
+def local_file(row: dict) -> Path | None:
+    """The spool file an upload row sends: the original copy or its converted version."""
+    if not row["spool_path"]:
+        return None
+    spool = Path(row["spool_path"])
+    return spool.parent / row["local_name"] if row.get("local_name") else spool
+
+
 class Uploader(threading.Thread):
     def __init__(self, ctx: "Context"):
         super().__init__(name="uploader", daemon=True)
@@ -57,7 +65,8 @@ class Uploader(threading.Thread):
         rows = self.ctx.db.all(
             "SELECT u.*, e.path AS usb_path, e.spool_path FROM uploads u "
             "JOIN file_events e ON e.id = u.event_id "
-            "WHERE u.status = 'pending' AND u.next_try <= ? ORDER BY u.id LIMIT ?",
+            "WHERE u.status = 'pending' AND u.next_try <= ? AND e.convert_status != 'pending' "
+            "ORDER BY u.id LIMIT ?",
             (time.time(), BATCH),
         )
         for row in rows:
@@ -74,8 +83,8 @@ class Uploader(threading.Thread):
         if not target["enabled"]:
             db.run("UPDATE uploads SET next_try = ? WHERE id = ?", (time.time() + 300, row["id"]))
             return
-        local = Path(row["spool_path"] or "")
-        if not row["spool_path"] or not local.exists():
+        local = local_file(row)
+        if local is None or not local.exists():
             self._fail(row, target, "Local copy is missing", final=True)
             return
         self.current = {"id": row["id"], "path": row["usb_path"], "target": target["name"],
@@ -144,14 +153,18 @@ class Uploader(threading.Thread):
         """Reset failed uploads to pending. Returns the number of rows changed."""
         db = self.ctx.db
         if upload_id is None:
-            rows = db.all("SELECT u.id FROM uploads u JOIN file_events e ON e.id = u.event_id "
+            rows = db.all("SELECT u.id, u.event_id, u.local_name, e.convert_status FROM uploads u "
+                          "JOIN file_events e ON e.id = u.event_id "
                           "WHERE u.status = 'failed' AND e.spool_path != ''")
         else:
-            rows = db.all("SELECT u.id FROM uploads u JOIN file_events e ON e.id = u.event_id "
+            rows = db.all("SELECT u.id, u.event_id, u.local_name, e.convert_status FROM uploads u "
+                          "JOIN file_events e ON e.id = u.event_id "
                           "WHERE u.id = ? AND u.status = 'failed' AND e.spool_path != ''", (upload_id,))
         for r in rows:
             db.run("UPDATE uploads SET status = 'pending', attempts = 0, next_try = 0, last_error = '', "
                    "finished_at = NULL WHERE id = ?", (r["id"],))
+            if r["local_name"] and r["convert_status"] == "failed":
+                self.ctx.converter.retry(r["event_id"])
         if rows:
             self.wake()
         return len(rows)

@@ -22,9 +22,10 @@
         q('[data-no-targets]').hidden = s.targets > 0;
 
         var current = s.uploads.current;
+        var converting = s.conversion && s.conversion.current;
         q('[data-current-upload]').textContent = current
             ? t('dashboard.uploading', { file: current.path, target: current.target })
-            : t('dashboard.no_upload');
+            : (converting ? t('dashboard.converting', { file: converting.path }) : t('dashboard.no_upload'));
 
         var sync = usb.last_sync;
         q('[data-sync-counts]').textContent = sync

@@ -151,3 +151,11 @@
     white-space: pre-wrap;
     font-size: 0.85rem;
 }
+
+/* Keep the main menu on one line between the xl breakpoint and wide screens. */
+@media (min-width: 1200px) and (max-width: 1399.98px) {
+    .navbar-expand-xl .navbar-nav .nav-link {
+        padding-left: 0.4rem;
+        padding-right: 0.4rem;
+    }
+}
