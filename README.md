@@ -4,7 +4,8 @@ NetUSBFlash turns a Raspberry Pi into a **network-connected USB stick**. Plug th
 into the USB port of a mixing console, a field recorder or any other device that
 records to a USB stick. The device records to the "stick" as usual, and
 NetUSBFlash uploads every new recording to your storage over SMB/CIFS, WebDAV
-(Nextcloud), FTP, FTPS, SFTP, SSHFS or SCP, and can send an email about it.
+(Nextcloud), FTP, FTPS, SFTP, SSHFS or SCP, or to Dropbox, iCloud Drive,
+OneDrive, Google Drive or Box, and can send an email about it.
 
 > **Status: alpha (0.1.0-alpha.1).** The software runs end to end with a
 > simulated USB stick and is covered by automated tests. It has **not yet been
@@ -16,6 +17,7 @@ NetUSBFlash uploads every new recording to your storage over SMB/CIFS, WebDAV
                               │  detects new recordings
                               ▼
                   SMB · WebDAV/Nextcloud · FTP(S) · SFTP/SSHFS · SCP
+           Dropbox · iCloud Drive · OneDrive · Google Drive · Box
                               │
                               ▼
                      NAS, cloud or server   (+ optional email)
@@ -32,6 +34,10 @@ NetUSBFlash uploads every new recording to your storage over SMB/CIFS, WebDAV
 - **Uploads** to any number of targets, with retries and backoff, include/exclude
   patterns, date-based subfolders, bandwidth limits and optional deletion from
   the stick after a successful upload.
+- **Cloud storage**: Dropbox, OneDrive, Google Drive and Box (login with a
+  token created by `rclone authorize` on a computer with a browser) and iCloud
+  Drive (Apple ID, password and two-factor code; needs rclone 1.69 or newer).
+  Refreshed tokens are stored automatically.
 - **Audio conversion** before the upload: recordings of selected file types
   (e.g. WAV) are converted to FLAC, MP3 or AAC with ffmpeg, with configurable
   bitrate, sample rate, channels, FLAC compression and bit depth. The file on

@@ -445,7 +445,9 @@
     }, true);
 
     // Target forms: show only the fields of the selected protocol and auth method.
-    function initTargetForm(root) {
+    // Blocks next to the shared fields (e.g. the SSH key) live in the same form.
+    function initTargetForm(fields) {
+        var root = fields.closest('form') || fields;
         var protocol = root.querySelector('[data-protocol-select]');
         var auth = root.querySelector('[data-auth-select]');
         function update() {

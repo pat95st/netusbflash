@@ -3,7 +3,8 @@
 declare(strict_types=1);
 
 const ROLE_LEVELS = ['viewer' => 1, 'operator' => 2, 'manager' => 3, 'admin' => 4];
-const PROTOCOLS = ['smb', 'webdav', 'ftp', 'ftps', 'sftp', 'sshfs', 'scp', 'local'];
+const PROTOCOLS = ['smb', 'webdav', 'ftp', 'ftps', 'sftp', 'sshfs', 'scp',
+    'dropbox', 'icloud', 'onedrive', 'gdrive', 'box', 'local'];
 
 function api(): ApiClient
 {

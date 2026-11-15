@@ -1,6 +1,7 @@
 """Upload transports for each supported protocol.
 
-rclone handles SMB/CIFS, WebDAV (incl. Nextcloud), FTP, FTPS and SFTP.
+rclone handles SMB/CIFS, WebDAV (incl. Nextcloud), FTP, FTPS, SFTP and the
+cloud services Dropbox, iCloud Drive, OneDrive, Google Drive and Box.
 SSHFS targets are served by rclone's SFTP backend, because SSHFS is SFTP on
 the wire. SCP uses the OpenSSH client. "local" copies into a local directory
 (useful for USB disks attached to the Pi and for tests).
@@ -13,14 +14,18 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
+from .cloud import (CLOUD_PROTOCOLS, RCLONE_BACKENDS, WRITEBACK_KEYS, CloudError, load_secret,
+                    parse_config_answer, read_rclone_section)
 from .config import Paths
 from .system import CommandError, run, which
 
-PROTOCOLS = ("smb", "webdav", "ftp", "ftps", "sftp", "sshfs", "scp", "local")
+PROTOCOLS = ("smb", "webdav", "ftp", "ftps", "sftp", "sshfs", "scp",
+             "dropbox", "icloud", "onedrive", "gdrive", "box", "local")
 DEFAULT_PORTS = {"smb": 445, "ftp": 21, "ftps": 21, "sftp": 22, "sshfs": 22, "scp": 22}
 
 DEFAULT_OPTIONS: dict[str, Any] = {
@@ -32,7 +37,25 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "subfolder": "{date}",     # template below the target path
     "keep_structure": True,    # keep folder structure from the USB stick
     "bwlimit": "",             # rclone bandwidth limit, e.g. 5M
+    "client_id": "",           # dropbox/onedrive/gdrive/box: own OAuth app (optional)
+    "root_folder_id": "",      # gdrive: start folder ID (optional)
+    "team_drive": "",          # gdrive: shared drive ID (optional)
+    "drive_id": "",            # onedrive: detected when the token is pasted
+    "drive_type": "",          # onedrive: personal | business | documentLibrary
 }
+
+# rclone 1.69 added iCloud Drive; older versions report an unknown backend.
+ICLOUD_MIN_RCLONE = "1.69"
+
+# One lock per target, so that two rclone runs never refresh the same OAuth
+# token at the same time (Box refresh tokens can be used only once).
+_locks: dict[Any, threading.Lock] = {}
+_locks_guard = threading.Lock()
+
+
+def _target_lock(key: Any) -> threading.Lock:
+    with _locks_guard:
+        return _locks.setdefault(key, threading.Lock())
 
 _SCP_SAFE = re.compile(r"[^A-Za-z0-9._/-]")
 
@@ -74,12 +97,24 @@ def remote_relative(target: dict[str, Any], usb_path: str, when: float, hostname
     return join_remote(sub, name)
 
 
+SecretCallback = Callable[[dict[str, str]], None]
+SecretLoader = Callable[[], str]
+
+
 class Transport:
-    def __init__(self, target: dict[str, Any], password: str, paths: Paths):
+    def __init__(self, target: dict[str, Any], password: str, paths: Paths,
+                 on_secret: SecretCallback | None = None, reload: SecretLoader | None = None):
         self.target = target
         self.password = password
         self.paths = paths
         self.options = {**DEFAULT_OPTIONS, **(target.get("options") or {})}
+        # Decoded secret: {"password": ...} or the cloud fields (token, ...).
+        self.secret = load_secret(target["protocol"], password)
+        # Called with changed secret values (refreshed tokens) after a run.
+        self.on_secret = on_secret
+        # Returns the currently stored secret; used to pick up a token that
+        # another run refreshed in the meantime.
+        self.reload = reload
 
     def put(self, local: Path, rel: str) -> str:
         """Upload local to <target path>/<rel>; return the full remote path."""
@@ -176,6 +211,25 @@ class RcloneTransport(Transport):
             elif self.password:
                 add("pass", self._obscure(self.password))
             add("known_hosts_file", str(self.paths.known_hosts) if self.paths.known_hosts.exists() else "")
+        elif proto in ("dropbox", "onedrive", "gdrive", "box"):
+            add("type", RCLONE_BACKENDS[proto])
+            add("client_id", self.options.get("client_id"))
+            add("client_secret", self.secret.get("client_secret"))
+            if proto == "gdrive":
+                add("scope", "drive")
+                add("root_folder_id", self.options.get("root_folder_id"))
+                add("team_drive", self.options.get("team_drive"))
+            elif proto == "onedrive":
+                add("drive_id", self.options.get("drive_id"))
+                add("drive_type", self.options.get("drive_type"))
+            add("token", self.secret.get("token"))
+        elif proto == "icloud":
+            add("type", RCLONE_BACKENDS[proto])
+            add("apple_id", t["username"])
+            if self.secret.get("password"):
+                add("pass", self._obscure(self.secret["password"]))
+            add("trust_token", self.secret.get("trust_token"))
+            add("cookies", self.secret.get("cookies"))
         else:
             raise TransferError(f"Unsupported protocol for rclone: {proto}")
         return "\n".join(lines) + "\n"
@@ -189,9 +243,30 @@ class RcloneTransport(Transport):
             flags += ["--bwlimit", str(self.options["bwlimit"])]
         return flags
 
+    def _check_ready(self) -> None:
+        proto = self.target["protocol"]
+        if proto in ("dropbox", "onedrive", "gdrive", "box") and not self.secret.get("token"):
+            raise TransferError("No access token stored. Create one with rclone authorize and paste it.")
+        if proto == "onedrive" and not self.options.get("drive_id"):
+            raise TransferError("The OneDrive drive ID is unknown. Paste a fresh token or enter the drive ID.")
+        if proto == "icloud" and not self.secret.get("trust_token"):
+            raise TransferError("Not signed in to iCloud yet. Save the target and use \"Sign in to iCloud\".")
+
     def _rclone(self, args: list[str], input_text: str | None = None, timeout: float = 6 * 3600) -> str:
         if not which("rclone"):
             raise TransferError("rclone is not installed.")
+        proto = self.target["protocol"]
+        if proto not in CLOUD_PROTOCOLS:
+            return self._rclone_run(args, input_text, timeout)
+        self._check_ready()
+        with _target_lock(self.target.get("id") or id(self)):
+            if self.reload is not None:
+                fresh = load_secret(proto, self.reload())
+                if fresh:
+                    self.secret = fresh
+            return self._rclone_run(args, input_text, timeout)
+
+    def _rclone_run(self, args: list[str], input_text: str | None, timeout: float) -> str:
         self.paths.run.mkdir(parents=True, exist_ok=True)
         fd, conf = tempfile.mkstemp(prefix="rclone-", suffix=".conf", dir=self.paths.run)
         try:
@@ -201,9 +276,26 @@ class RcloneTransport(Transport):
             return run(["rclone", "--config", conf, *args, *self._flags()],
                        input_text=input_text, timeout=timeout)
         except CommandError as exc:
-            raise TransferError(_short_error(exc.output)) from exc
+            raise TransferError(_rclone_error(exc.output)) from exc
         finally:
+            self._write_back(conf)
             os.unlink(conf)
+
+    def _write_back(self, conf: str) -> None:
+        """Keep tokens and cookies that rclone refreshed during the run."""
+        keys = WRITEBACK_KEYS.get(self.target["protocol"])
+        if not keys:
+            return
+        try:
+            values = read_rclone_section(Path(conf).read_text(), self.SECTION)
+        except OSError:
+            return
+        changes = {k: values[k] for k in keys if values.get(k) and values[k] != self.secret.get(k)}
+        if not changes:
+            return
+        self.secret.update(changes)
+        if self.on_secret is not None:
+            self.on_secret(changes)
 
     def _remote(self, rel: str = "") -> str:
         return f"{self.SECTION}:{join_remote(self.target['path'] or '', rel)}"
@@ -289,6 +381,109 @@ class ScpTransport(Transport):
         return [f"Logged in via SSH and verified that {base} is writable"]
 
 
+def _rclone_error(output: str) -> str:
+    if "didn't find backend called" in output:
+        name = output.split("didn't find backend called", 1)[1].strip().split()[0].strip('"\'')
+        hint = f" iCloud Drive needs rclone {ICLOUD_MIN_RCLONE} or newer." if name == "iclouddrive" else ""
+        return f"The installed rclone does not support the backend \"{name}\".{hint}"
+    return _short_error(output)
+
+
+class ICloudLogin:
+    """Interactive iCloud sign-in with a two-factor code.
+
+    rclone's config state machine is driven non-interactively: the first step
+    signs in with Apple ID and password and asks for the 2FA code; the second
+    step sends the code. In between, rclone keeps the session cookies in a
+    config file, which is kept in the run directory for that time.
+    """
+
+    SECTION = "target"
+
+    def __init__(self, target: dict[str, Any], password: str, paths: Paths):
+        self.target = target
+        self.paths = paths
+        self.secret = load_secret("icloud", password)
+        key = target.get("id") or "new"
+        self.conf = paths.run / f"icloud-login-{key}.conf"
+        self.state_file = paths.run / f"icloud-login-{key}.state"
+
+    def _rclone(self, args: list[str]) -> dict[str, Any]:
+        if not which("rclone"):
+            raise TransferError("rclone is not installed.")
+        try:
+            output = run(["rclone", "--config", str(self.conf), *args, "--non-interactive"], timeout=120)
+        except CommandError as exc:
+            raise TransferError(_rclone_error(exc.output)) from exc
+        try:
+            return parse_config_answer(output)
+        except CloudError as exc:
+            raise TransferError(str(exc)) from exc
+
+    def cleanup(self) -> None:
+        self.conf.unlink(missing_ok=True)
+        self.state_file.unlink(missing_ok=True)
+
+    def start(self) -> dict[str, Any]:
+        """Sign in. Returns {"status": "code_required"} or {"status": "ok", "secret": {...}}."""
+        apple_id = self.target.get("username") or ""
+        if not apple_id or not self.secret.get("password"):
+            raise TransferError("Apple ID and password are required.")
+        if not which("rclone"):
+            raise TransferError("rclone is not installed.")
+        self.paths.run.mkdir(parents=True, exist_ok=True)
+        self.cleanup()
+        try:
+            obscured = run(["rclone", "obscure", "-"], input_text=self.secret["password"], timeout=15).strip()
+        except CommandError as exc:
+            raise TransferError(_short_error(exc.output)) from exc
+        fd = os.open(self.conf, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as handle:
+            handle.write(f"[{self.SECTION}]\ntype = iclouddrive\napple_id = {apple_id}\npass = {obscured}\n")
+        try:
+            answer = self._rclone(["config", "update", self.SECTION, "apple_id", apple_id])
+            return self._handle(answer)
+        except BaseException:
+            self.cleanup()
+            raise
+
+    def submit_code(self, code: str) -> dict[str, Any]:
+        if not self.conf.exists() or not self.state_file.exists():
+            raise TransferError("The sign-in has expired. Start it again.")
+        state = self.state_file.read_text()
+        try:
+            answer = self._rclone(["config", "update", self.SECTION, "--continue",
+                                   "--state", state, "--result", code])
+            return self._handle(answer)
+        except BaseException:
+            self.cleanup()
+            raise
+
+    def _handle(self, answer: dict[str, Any]) -> dict[str, Any]:
+        # Options other than the 2FA code are answered with their default.
+        for _ in range(5):
+            if answer.get("Error"):
+                raise TransferError(str(answer["Error"])[-400:])
+            option = answer.get("Option")
+            if not option:
+                values = read_rclone_section(self.conf.read_text(), self.SECTION)
+                self.cleanup()
+                if not values.get("trust_token"):
+                    raise TransferError("iCloud did not return a session. Try again.")
+                return {"status": "ok", "secret": {"trust_token": values["trust_token"],
+                                                   "cookies": values.get("cookies", "")}}
+            if option.get("Name") == "config_2fa":
+                fd = os.open(self.state_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "w") as handle:
+                    handle.write(str(answer.get("State") or ""))
+                return {"status": "code_required"}
+            default = option.get("Default")
+            answer = self._rclone(["config", "update", self.SECTION, "--continue",
+                                   "--state", str(answer.get("State") or ""),
+                                   "--result", "" if default is None else str(default)])
+        raise TransferError("The iCloud sign-in did not finish.")
+
+
 def _short_error(output: str) -> str:
     lines = [ln.strip() for ln in output.splitlines() if ln.strip()]
     for line in reversed(lines):
@@ -297,12 +492,13 @@ def _short_error(output: str) -> str:
     return (lines[-1] if lines else "unknown error")[-400:]
 
 
-def make_transport(target: dict[str, Any], password: str, paths: Paths) -> Transport:
+def make_transport(target: dict[str, Any], password: str, paths: Paths,
+                   on_secret: SecretCallback | None = None, reload: SecretLoader | None = None) -> Transport:
     proto = target["protocol"]
     if proto == "local":
-        return LocalTransport(target, password, paths)
+        return LocalTransport(target, password, paths, on_secret, reload)
     if proto == "scp":
-        return ScpTransport(target, password, paths)
+        return ScpTransport(target, password, paths, on_secret, reload)
     if proto in PROTOCOLS:
-        return RcloneTransport(target, password, paths)
+        return RcloneTransport(target, password, paths, on_secret, reload)
     raise TransferError(f"Unknown protocol: {proto}")

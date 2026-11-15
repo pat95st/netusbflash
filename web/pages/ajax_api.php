@@ -22,7 +22,7 @@ $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 const AJAX_ALLOWED = '#^/('
     . 'status|files|file-events|mail-queue|events|audit'
     . '|usb(/(attach|detach|sync|image))?'
-    . '|targets(/test|/\d+(/test)?)?'
+    . '|targets(/test|/\d+(/test|/icloud/(login|code))?)?'
     . '|uploads(/retry-failed|/\d+/(retry|discard))?'
     . '|conversion'
     . '|smtp(/test)?|rules(/\d+|/preview)?'

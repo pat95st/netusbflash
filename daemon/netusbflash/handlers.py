@@ -20,7 +20,9 @@ from .mailer import DEFAULT_SMTP, EVENT_TYPES, PLACEHOLDERS, SECURITY_MODES, Mai
 from .updater import REPO_RE, UpdateError
 from .setup import STEPS
 from .system import CommandError
-from .transports import DEFAULT_OPTIONS, PROTOCOLS, TransferError, make_transport
+from .cloud import (CLOUD_PROTOCOLS, OAUTH_PROTOCOLS, ONEDRIVE_DRIVE_TYPES, CloudError,
+                    detect_onedrive_drive, dump_secret, load_secret, normalize_token)
+from .transports import DEFAULT_OPTIONS, PROTOCOLS, ICloudLogin, TransferError, make_transport
 from .validate import (BWLIMIT_RE, HEX16_RE, HOST_RE, HOSTNAME_RE, LABEL_RE, SAFE_TEXT_RE,
                        TIMEZONE_RE, USERNAME_RE, ValidationError, Validator)
 
@@ -29,6 +31,9 @@ if TYPE_CHECKING:
 
 SERIAL_RE = re.compile(r"^[A-Za-z0-9]{0,32}$")
 URL_RE = re.compile(r"^https?://[^\s]{1,500}$")
+CLOUD_ID_RE = re.compile(r"^[A-Za-z0-9!._-]{1,200}$")
+CLIENT_ID_RE = re.compile(r"^[\x21-\x7e]{1,256}$")
+TWO_FA_RE = re.compile(r"^\d{6}$")
 MIN_IMAGE_MB = 64
 
 
@@ -45,42 +50,76 @@ def target_public(ctx: "Context", row: dict[str, Any]) -> dict[str, Any]:
     view = ctx.target_view(row)
     counts = {r["status"]: r["n"] for r in ctx.db.all(
         "SELECT status, COUNT(*) AS n FROM uploads WHERE target_id = ? GROUP BY status", (row["id"],))}
+    secret = load_secret(row["protocol"], ctx.secrets.decrypt(row["secret"])) if row["secret"] else {}
     return {
         "id": row["id"], "name": row["name"], "protocol": row["protocol"], "host": row["host"],
         "port": row["port"], "path": row["path"], "username": row["username"],
-        "has_password": bool(row["secret"]), "options": view["options"], "enabled": bool(row["enabled"]),
+        "has_password": bool(secret.get("password")), "has_token": bool(secret.get("token")),
+        "has_client_secret": bool(secret.get("client_secret")),
+        "icloud_signed_in": bool(secret.get("trust_token")),
+        "options": view["options"], "enabled": bool(row["enabled"]),
         "uploads": {"pending": counts.get("pending", 0), "done": counts.get("done", 0),
                     "failed": counts.get("failed", 0)},
     }
 
 
-def parse_target(body: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
-    """Validate target fields. Returns (fields, password or None to keep)."""
+def parse_target(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """Validate target fields.
+
+    Returns (fields, secret_update). secret_update holds only the secret values
+    that were entered (e.g. {"password": "..."} or {"token": "..."}); missing
+    keys keep the stored value, an empty string removes it.
+    """
     v = Validator(body)
     name = v.string("name", required=True, max_len=64)
     protocol = v.choice("protocol", PROTOCOLS)
+    cloud = protocol in CLOUD_PROTOCOLS
     if protocol == "webdav":
         host = v.string("host", required=True, max_len=500, pattern=URL_RE)
-    elif protocol == "local":
+    elif protocol == "local" or cloud:
         host = ""
     else:
         host = v.string("host", required=True, max_len=253, pattern=HOST_RE)
-    port = v.integer("port", minimum=1, maximum=65535, default=None)
+    port = None if cloud else v.integer("port", minimum=1, maximum=65535, default=None)
     path = v.remote_path("path")
     if protocol == "local" and not path.startswith("/"):
         v.errors["path"] = "invalid"
     if protocol == "smb" and not path.strip("/"):
         v.errors["path"] = "required"
-    username = v.string("username", max_len=128)
+    if protocol == "icloud":
+        username = v.string("username", required=True, max_len=254)
+    elif protocol in OAUTH_PROTOCOLS:
+        username = ""
+    else:
+        username = v.string("username", max_len=128)
     enabled = v.boolean("enabled", True)
-    raw_password = body.get("password")
-    password: str | None = None
-    if isinstance(raw_password, str) and raw_password != "":
-        if len(raw_password) > 256 or "\n" in raw_password:
-            v.errors["password"] = "invalid"
-        password = raw_password
-    elif body.get("clear_password"):
-        password = ""
+
+    update: dict[str, str] = {}
+    if protocol not in OAUTH_PROTOCOLS:
+        raw_password = body.get("password")
+        if isinstance(raw_password, str) and raw_password != "":
+            if len(raw_password) > 256 or "\n" in raw_password:
+                v.errors["password"] = "invalid"
+            update["password"] = raw_password
+        elif body.get("clear_password"):
+            update["password"] = ""
+    else:
+        raw_token = body.get("token")
+        if isinstance(raw_token, str) and raw_token.strip():
+            try:
+                update["token"] = normalize_token(raw_token)
+            except CloudError as exc:
+                v.errors["token"] = "too_long" if str(exc) == "too_long" else "invalid"
+        elif raw_token not in (None, ""):
+            v.errors["token"] = "invalid"
+        raw_client_secret = body.get("client_secret")
+        if isinstance(raw_client_secret, str) and raw_client_secret != "":
+            if len(raw_client_secret) > 256 or not CLIENT_ID_RE.match(raw_client_secret):
+                v.errors["client_secret"] = "invalid"
+            update["client_secret"] = raw_client_secret
+        elif body.get("clear_client_secret"):
+            update["client_secret"] = ""
+
     ov = Validator(body.get("options") or {})
     options = {
         "domain": ov.string("domain", max_len=64),
@@ -91,14 +130,77 @@ def parse_target(body: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
         "subfolder": ov.string("subfolder", max_len=128, default=DEFAULT_OPTIONS["subfolder"]),
         "keep_structure": ov.boolean("keep_structure", True),
         "bwlimit": ov.string("bwlimit", max_len=8, pattern=BWLIMIT_RE),
+        "client_id": ov.string("client_id", max_len=256, pattern=CLIENT_ID_RE),
+        "root_folder_id": ov.string("root_folder_id", max_len=200, pattern=CLOUD_ID_RE),
+        "team_drive": ov.string("team_drive", max_len=200, pattern=CLOUD_ID_RE),
+        "drive_id": ov.string("drive_id", max_len=200, pattern=CLOUD_ID_RE),
+        "drive_type": ov.choice("drive_type", ("", *ONEDRIVE_DRIVE_TYPES), ""),
     }
     if ".." in options["subfolder"].split("/"):
         ov.errors["subfolder"] = "invalid"
+    if protocol not in OAUTH_PROTOCOLS:
+        options["client_id"] = ""
+    if protocol != "gdrive":
+        options["root_folder_id"] = options["team_drive"] = ""
+    if protocol != "onedrive":
+        options["drive_id"] = options["drive_type"] = ""
+    elif options["drive_id"] and not options["drive_type"]:
+        ov.errors["drive_type"] = "required"
     v.errors.update({f"options.{k}": e for k, e in ov.errors.items()})
     v.raise_if_errors()
     fields = {"name": name, "protocol": protocol, "host": host, "port": port, "path": path,
               "username": username, "options": json.dumps(options), "enabled": int(enabled)}
-    return fields, password
+    return fields, update
+
+
+def merge_target_secret(fields: dict[str, Any], update: dict[str, str],
+                        old: dict[str, Any] | None, old_plain: str) -> str:
+    """Combine the stored secret of a target with the values just entered."""
+    protocol = fields["protocol"]
+    data: dict[str, str] = {}
+    if old is not None:
+        stored = load_secret(old["protocol"], old_plain)
+        if old["protocol"] == protocol:
+            data = stored
+        elif stored.get("password") and protocol not in OAUTH_PROTOCOLS:
+            data = {"password": stored["password"]}
+        # A session belongs to one Apple ID.
+        if protocol == "icloud" and old["username"].lower() != fields["username"].lower():
+            data.pop("trust_token", None)
+            data.pop("cookies", None)
+    data.update(update)
+    if protocol == "icloud" and "password" in update:
+        data.pop("trust_token", None)
+        data.pop("cookies", None)
+    return dump_secret(protocol, {k: v for k, v in data.items() if v})
+
+
+def prepare_target(ctx: "Context", body: dict[str, Any],
+                   old: dict[str, Any] | None = None) -> tuple[dict[str, Any], str, dict[str, str]]:
+    """Validate a target form and build the secret to store.
+
+    Returns (fields, plain secret, secret_update).
+    """
+    fields, update = parse_target(body)
+    plain = merge_target_secret(fields, update, old, ctx.secrets.decrypt(old["secret"]) if old else "")
+    secret = load_secret(fields["protocol"], plain)
+    errors: dict[str, str] = {}
+    if fields["protocol"] in OAUTH_PROTOCOLS and not secret.get("token"):
+        errors["token"] = "required"
+    if fields["protocol"] == "icloud" and not secret.get("password"):
+        errors["password"] = "required"
+    if errors:
+        raise ValidationError(errors)
+    options = json.loads(fields["options"])
+    if fields["protocol"] == "onedrive" and ("token" in update or not options["drive_id"]):
+        try:
+            options["drive_id"], options["drive_type"] = detect_onedrive_drive(secret["token"])
+        except CloudError as exc:
+            if not options["drive_id"]:
+                raise ValidationError({"options.drive_id": "detect_failed"}) from exc
+            ctx.db.log("warning", "target", f"OneDrive drive could not be detected: {exc}")
+        fields["options"] = json.dumps(options)
+    return fields, plain, update
 
 
 def parse_usb(body: dict[str, Any], current: dict[str, Any], max_mb: int) -> dict[str, Any]:
@@ -207,9 +309,18 @@ def rule_public(row: dict[str, Any]) -> dict[str, Any]:
             "enabled": bool(row["enabled"])}
 
 
-def run_target_test(ctx: "Context", fields: dict[str, Any], password: str) -> dict[str, Any]:
+def run_target_test(ctx: "Context", fields: dict[str, Any], password: str,
+                    persist_id: int | None = None) -> dict[str, Any]:
+    """Test a target. With persist_id, refreshed tokens are saved to that target."""
     view = ctx.target_view({**fields, "options": fields["options"]})
-    transport = make_transport(view, password, ctx.paths)
+    if persist_id is not None:
+        view["id"] = persist_id
+        protocol = fields["protocol"]
+        transport = make_transport(
+            view, password, ctx.paths,
+            on_secret=lambda changes: ctx.persist_target_secret(persist_id, protocol, changes))
+    else:
+        transport = make_transport(view, password, ctx.paths)
     started = time.time()
     try:
         steps = transport.test()
@@ -331,14 +442,14 @@ def register(router: Router, ctx: "Context") -> None:
     def setup_target(req: Request):
         if req.body.get("skip"):
             return {"step": ctx.setup.advance("target")}
-        fields, password = parse_target(req.body)
+        fields, secret, _update = prepare_target(ctx, req.body)
         if req.body.get("test_only"):
-            return run_target_test(ctx, fields, password or "")
+            return run_target_test(ctx, fields, secret)
         now = time.time()
         db.run("INSERT INTO targets(name, protocol, host, port, path, username, secret, options, enabled, "
                "created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                (fields["name"], fields["protocol"], fields["host"], fields["port"], fields["path"],
-                fields["username"], ctx.secrets.encrypt(password or ""), fields["options"],
+                fields["username"], ctx.secrets.encrypt(secret), fields["options"],
                 fields["enabled"], now, now))
         return {"step": ctx.setup.advance("target")}
 
@@ -632,21 +743,21 @@ def register(router: Router, ctx: "Context") -> None:
         return {"target": target_public(ctx, _target_or_404(req))}
 
     def target_create(req: Request):
-        fields, password = parse_target(req.body)
+        fields, secret, _update = prepare_target(ctx, req.body)
         now = time.time()
         tid = db.run(
             "INSERT INTO targets(name, protocol, host, port, path, username, secret, options, enabled, "
             "created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (fields["name"], fields["protocol"], fields["host"], fields["port"], fields["path"],
-             fields["username"], ctx.secrets.encrypt(password or ""), fields["options"], fields["enabled"],
+             fields["username"], ctx.secrets.encrypt(secret), fields["options"], fields["enabled"],
              now, now))
         db.audit(req.user, "target.create", fields["name"], fields["protocol"])
         return 201, {"target": target_public(ctx, db.one("SELECT * FROM targets WHERE id = ?", (tid,)))}
 
     def target_update(req: Request):
         row = _target_or_404(req)
-        fields, password = parse_target(req.body)
-        secret = row["secret"] if password is None else ctx.secrets.encrypt(password)
+        fields, plain, _update = prepare_target(ctx, req.body, row)
+        secret = ctx.secrets.encrypt(plain)
         db.run("UPDATE targets SET name = ?, protocol = ?, host = ?, port = ?, path = ?, username = ?, "
                "secret = ?, options = ?, enabled = ?, updated_at = ? WHERE id = ?",
                (fields["name"], fields["protocol"], fields["host"], fields["port"], fields["path"],
@@ -665,17 +776,58 @@ def register(router: Router, ctx: "Context") -> None:
     def target_test_saved(req: Request):
         row = _target_or_404(req)
         fields = {k: row[k] for k in ("name", "protocol", "host", "port", "path", "username", "options")}
-        result = run_target_test(ctx, fields, ctx.secrets.decrypt(row["secret"]))
+        result = run_target_test(ctx, fields, ctx.secrets.decrypt(row["secret"]), persist_id=row["id"])
         db.log("info" if result["ok"] else "warning", "target",
                f"Connection test for {row['name']}: {'ok' if result['ok'] else result['error']}")
         return result
 
     def target_test_unsaved(req: Request):
-        fields, password = parse_target(req.body)
-        if password is None and req.body.get("id"):
-            row = db.one("SELECT secret FROM targets WHERE id = ?", (int(req.body["id"]),))
-            password = ctx.secrets.decrypt(row["secret"]) if row else ""
-        return run_target_test(ctx, fields, password or "")
+        row = None
+        if req.body.get("id"):
+            try:
+                row = db.one("SELECT * FROM targets WHERE id = ?", (int(req.body["id"]),))
+            except (TypeError, ValueError):
+                row = None
+        fields, secret, update = prepare_target(ctx, req.body, row)
+        # Refreshed tokens are kept only if the test used the stored login.
+        persist = (row is not None and row["protocol"] == fields["protocol"]
+                   and row["username"] == fields["username"] and not update)
+        return run_target_test(ctx, fields, secret, persist_id=row["id"] if persist else None)
+
+    def _icloud_target(req: Request) -> dict[str, Any]:
+        row = _target_or_404(req)
+        if row["protocol"] != "icloud":
+            raise ApiError(400, "not_icloud", "This target is not an iCloud Drive target.")
+        return row
+
+    def _icloud_result(row: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+        if result["status"] == "ok":
+            ctx.persist_target_secret(row["id"], "icloud", result["secret"])
+            db.log("info", "target", f"Signed in to iCloud for {row['name']}")
+            ctx.uploader.wake()
+        return {"status": result["status"]}
+
+    def icloud_login(req: Request):
+        row = _icloud_target(req)
+        login = ICloudLogin(ctx.target_view(row), ctx.secrets.decrypt(row["secret"]), ctx.paths)
+        try:
+            result = login.start()
+        except TransferError as exc:
+            raise ApiError(502, "icloud_failed", str(exc)) from exc
+        db.audit(req.user, "target.icloud_login", row["name"])
+        return _icloud_result(row, result)
+
+    def icloud_code(req: Request):
+        row = _icloud_target(req)
+        v = Validator(req.body)
+        v.string("code", required=True, max_len=6, pattern=TWO_FA_RE)
+        v.raise_if_errors()
+        login = ICloudLogin(ctx.target_view(row), ctx.secrets.decrypt(row["secret"]), ctx.paths)
+        try:
+            result = login.submit_code(v.clean["code"])
+        except TransferError as exc:
+            raise ApiError(502, "icloud_failed", str(exc)) from exc
+        return _icloud_result(row, result)
 
     r("GET", "/targets", targets_list, "viewer")
     r("POST", "/targets", target_create, "manager")
@@ -684,6 +836,8 @@ def register(router: Router, ctx: "Context") -> None:
     r("PUT", "/targets/{id}", target_update, "manager")
     r("DELETE", "/targets/{id}", target_delete, "manager")
     r("POST", "/targets/{id}/test", target_test_saved, "manager")
+    r("POST", "/targets/{id}/icloud/login", icloud_login, "manager")
+    r("POST", "/targets/{id}/icloud/code", icloud_code, "manager")
 
     # Uploads ---------------------------------------------------------------
 
