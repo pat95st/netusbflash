@@ -132,7 +132,53 @@ changed recording is uploaded to every enabled target.
 | FTPS | `ftp.example.com` | `/upload` | Explicit TLS (port 21) or implicit TLS (port 990). Keep certificate checking on. |
 | SFTP / SSHFS | `server.example.com` | `/home/user/recordings` | Prefer **SSH key**: generate the key, add the shown public key to `~/.ssh/authorized_keys` on the server. |
 | SCP | `server.example.com` | `recordings` | Copy only. Password login needs `sshpass` (installed); key login is recommended. |
+| Dropbox, OneDrive, Google Drive, Box | – | `Recordings/Mixer` | Paste an access token, see below. |
+| iCloud Drive | – | `Recordings` | Apple ID and password, then sign in with a two-factor code, see below. |
 | Local folder | – | `/media/usbdisk/recordings` | A disk attached to the Pi. |
+
+### Dropbox, OneDrive, Google Drive and Box
+
+These services log in through a web browser, which the Pi does not have. Create
+the login on any computer with a browser instead:
+
+1. Install rclone on that computer: <https://rclone.org/downloads/>.
+2. Run the command for your service in a terminal:
+
+   | Service | Command |
+   | --- | --- |
+   | Dropbox | `rclone authorize "dropbox"` |
+   | OneDrive | `rclone authorize "onedrive"` |
+   | Google Drive | `rclone authorize "drive"` |
+   | Box | `rclone authorize "box"` |
+
+3. Sign in in the browser window that opens and allow access.
+4. Copy everything rclone prints after that (the text between
+   `Paste the following …` and `<---End paste`, or the whole output) into the
+   **Access token** field and save.
+
+NetUSBFlash stores the token encrypted and saves refreshed tokens
+automatically. For OneDrive the drive is detected right after you paste the
+token; for SharePoint libraries enter the drive ID and type yourself.
+
+By default rclone's shared app is used. Under **Own app** you can enter the
+client ID and secret of your own app (recommended for Google Drive, whose shared
+app is rate limited); then run `rclone authorize "drive" "CLIENT_ID" "CLIENT_SECRET"`.
+Google Drive can also upload into a shared drive or a start folder (IDs from the
+folder address).
+
+### iCloud Drive
+
+iCloud Drive needs **rclone 1.69 or newer**. Raspberry Pi OS may ship an older
+version; install the current one with `sudo -v ; curl https://rclone.org/install.sh | sudo bash`.
+
+1. On an Apple device, turn on **Access iCloud Data on the Web** and turn off
+   **Advanced Data Protection** (Settings → your name → iCloud).
+2. Add the target with your Apple ID and password and save.
+3. Click **Save and sign in to iCloud** and enter the 6-digit code shown on your
+   Apple device.
+
+Apple ends the session after about 30 days. Uploads then fail with a login
+error; sign in again on the target page.
 
 **Subfolder per upload** sorts uploads into folders, e.g. `{date}` →
 `2026-10-26/`. Placeholders: `{date}`, `{year}`, `{month}`, `{day}`, `{time}`,
@@ -221,6 +267,8 @@ can unlock it earlier.
 | The console does not see files after a check | Use the sync mode *Disconnect briefly*; with *Stay connected*, the console may cache the old directory. |
 | Files are not picked up | The console may still be writing; increase *Wait after last write*. Check include/exclude patterns. Use **Check for new files** on the USB stick page. |
 | Connection test fails | Check address, port, user, password; for FTPS/WebDAV the certificate; for SFTP/SCP that the public key is on the server. |
+| Cloud target: token rejected | Create a new token with `rclone authorize` and paste it. Tokens that are not used for months can expire. |
+| iCloud: backend not found | The rclone on the Pi is older than 1.69; install the current version (see above). |
 | No emails | Send a test email; the error is shown under *Recent emails*. |
 | File manager shows "not installed" | Run `sudo ./packaging/install.sh --upgrade` from a release or a checkout with internet access (it downloads FileGator). |
 | An update fails | The update log under **Administration → Updates** shows the output; the full log is `/var/lib/netusbflash/updates/update.log`. |

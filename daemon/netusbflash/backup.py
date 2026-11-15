@@ -28,7 +28,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from . import __version__
 from .system import CommandError
-from .transports import TransferError, join_remote, make_transport
+from .transports import TransferError, join_remote
 
 if TYPE_CHECKING:
     from .service import Context
@@ -245,8 +245,7 @@ class BackupService(threading.Thread):
         try:
             with os.fdopen(fd, "wb") as handle:
                 handle.write(data)
-            view = self.ctx.target_view(target)
-            transport = make_transport(view, self.ctx.secrets.decrypt(target["secret"]), self.ctx.paths)
+            transport = self.ctx.transport_for(target)
             remote = transport.put(Path(tmp), join_remote(cfg["directory"] or "", name))
         except (TransferError, CommandError, OSError) as exc:
             self.ctx.db.log("error", "backup", f"Backup upload to {target['name']} failed: {exc}")

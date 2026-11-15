@@ -13,6 +13,22 @@
         <fieldset class="card-body"<?= readonly_unless('manager') ?>>
             <?php require __DIR__ . '/partials/target_fields.php'; ?>
             <?php if (has_role('manager')): ?>
+                <div class="mt-4" data-icloud-panel hidden>
+                    <span class="form-label d-block"><?= e(t('target.icloud_signin')) ?></span>
+                    <p class="small mb-2" data-icloud-state
+                       data-text-in="<?= e(t('target.icloud_signed_in')) ?>"
+                       data-text-out="<?= e(t('target.icloud_signed_out')) ?>"></p>
+                    <button class="btn btn-outline-secondary btn-sm" type="button" data-icloud-login><?= e(t('target.icloud_login')) ?></button>
+                    <div class="mt-3" data-icloud-code-box hidden>
+                        <label class="form-label" for="t_icloud_code"><?= e(t('target.icloud_code')) ?></label>
+                        <div class="input-group icloud-code">
+                            <input class="form-control" id="t_icloud_code" inputmode="numeric" autocomplete="one-time-code"
+                                   maxlength="6" pattern="[0-9]{6}" data-ignore>
+                            <button class="btn btn-primary" type="button" data-icloud-submit><?= e(t('target.icloud_confirm')) ?></button>
+                        </div>
+                        <div class="form-text"><?= e(t('target.icloud_code_help')) ?></div>
+                    </div>
+                </div>
                 <div class="mt-4" data-protocols="sftp sshfs scp" data-auth="key">
                     <span class="form-label d-block"><?= e(t('target.public_key')) ?></span>
                     <div data-key-present hidden>

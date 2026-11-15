@@ -85,7 +85,8 @@ everywhere. The preview is shown in a sandboxed `iframe` without scripts.
 | `monitor.py` | idle detection, scanning the stick, file index, queueing uploads |
 | `uploader.py` | upload queue with retries and backoff |
 | `converter.py` | conversion rules and the ffmpeg worker that converts recordings (FLAC, MP3, AAC) before the upload |
-| `transports.py` | protocol backends: rclone (SMB, WebDAV, FTP/FTPS, SFTP/SSHFS), OpenSSH scp, local copy |
+| `transports.py` | protocol backends: rclone (SMB, WebDAV, FTP/FTPS, SFTP/SSHFS, Dropbox, iCloud Drive, OneDrive, Google Drive, Box), OpenSSH scp, local copy; token write-back and the iCloud 2FA sign-in |
+| `cloud.py` | cloud providers: token parsing, secret format, OneDrive drive detection, rclone config helpers |
 | `mailer.py` | notification rules, templates and placeholders, digests, SMTP client, mail queue |
 | `htmlsafe.py` | allow-list HTML sanitiser for mail templates |
 | `browser.py` | file manager mount (off / view / edit) and edit timeout |

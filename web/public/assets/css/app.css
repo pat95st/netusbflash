@@ -159,3 +159,7 @@
         padding-right: 0.4rem;
     }
 }
+
+.icloud-code {
+    max-width: 16rem;
+}

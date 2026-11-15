@@ -25,7 +25,8 @@ from .mailer import Mailer, Notifier
 from .monitor import Monitor
 from .setup import SetupState
 from .system import CommandError
-from .transports import DEFAULT_OPTIONS
+from .cloud import dump_secret, load_secret
+from .transports import DEFAULT_OPTIONS, Transport, make_transport
 from .updater import Updater
 from .uploader import Uploader
 
@@ -77,6 +78,30 @@ class Context:
             except json.JSONDecodeError:
                 options = {}
         return {**row, "options": {**DEFAULT_OPTIONS, **options}}
+
+    def target_secret(self, target_id: int) -> str:
+        """Decrypted secret of a saved target ('' if it does not exist)."""
+        secret = self.db.scalar("SELECT secret FROM targets WHERE id = ?", (target_id,))
+        return self.secrets.decrypt(secret) if secret else ""
+
+    def persist_target_secret(self, target_id: int, protocol: str, changes: dict[str, str]) -> None:
+        """Merge values refreshed by rclone (tokens, cookies) into a saved target."""
+        with self.db.write_lock:
+            row = self.db.one("SELECT protocol, secret FROM targets WHERE id = ?", (target_id,))
+            if row is None or row["protocol"] != protocol:
+                return
+            data = load_secret(protocol, self.secrets.decrypt(row["secret"]))
+            data.update(changes)
+            self.db.run("UPDATE targets SET secret = ? WHERE id = ?",
+                        (self.secrets.encrypt(dump_secret(protocol, data)), target_id))
+
+    def transport_for(self, target: dict[str, Any]) -> Transport:
+        """Transport for a saved target that keeps refreshed tokens."""
+        target_id, protocol = target["id"], target["protocol"]
+        return make_transport(
+            self.target_view(target), self.secrets.decrypt(target["secret"]), self.paths,
+            on_secret=lambda changes: self.persist_target_secret(target_id, protocol, changes),
+            reload=lambda: self.target_secret(target_id))
 
     def defer(self, func: Callable[[], None], delay: float = 1.0) -> None:
         """Run func shortly after the current API response was sent."""

@@ -10,6 +10,9 @@
 
     function destination(target) {
         var host = target.host ? target.host + (target.port ? ':' + target.port : '') : '';
+        if (target.protocol === 'icloud') {
+            host = target.username; // Apple ID
+        }
         return (host + ' ' + (target.path || '')).trim();
     }
 

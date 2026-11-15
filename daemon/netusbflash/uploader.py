@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .system import CommandError
-from .transports import TransferError, make_transport
+from .transports import TransferError
 
 if TYPE_CHECKING:
     from .service import Context
@@ -89,8 +89,7 @@ class Uploader(threading.Thread):
             return
         self.current = {"id": row["id"], "path": row["usb_path"], "target": target["name"],
                         "started": time.time()}
-        view = self.ctx.target_view(target)
-        transport = make_transport(view, self.ctx.secrets.decrypt(target["secret"]), self.ctx.paths)
+        transport = self.ctx.transport_for(target)
         try:
             remote = transport.put(local, row["remote_path"])
         except (TransferError, CommandError, OSError) as exc:

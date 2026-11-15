@@ -22,7 +22,8 @@ foreach (array_diff(array_keys($de), array_keys($en)) as $key) {
 // Keys that are built at runtime from a prefix and a known set of values.
 $dynamic = [
     'role.' => ['viewer', 'operator', 'manager', 'admin', 'viewer_help', 'operator_help', 'manager_help', 'admin_help'],
-    'protocol.' => ['smb', 'webdav', 'ftp', 'ftps', 'sftp', 'sshfs', 'scp', 'local'],
+    'protocol.' => ['smb', 'webdav', 'ftp', 'ftps', 'sftp', 'sshfs', 'scp', 'dropbox', 'icloud', 'onedrive',
+        'gdrive', 'box', 'local'],
     'monitor.' => ['idle', 'host_writing', 'waiting_idle', 'syncing'],
     'event.' => ['created', 'modified', 'deleted', 'uploaded', 'upload_failed'],
     'setup.step.' => ['admin', 'system', 'usb', 'target', 'smtp', 'finish'],

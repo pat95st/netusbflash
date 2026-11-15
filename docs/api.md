@@ -17,7 +17,7 @@ group `netusbflash`). It speaks JSON over HTTP/1.1; all paths start with
 Errors return a status code and `{"error": "<code>", "message": "…", "fields": {"<field>": "<code>"}}`.
 Validation errors use status 422 and the code `validation`; field codes are
 `required`, `invalid`, `too_long`, `too_short`, `out_of_range`, `taken`,
-`wrong_password`, `same_password`, `requires_detach`.
+`wrong_password`, `same_password`, `requires_detach`, `detect_failed`.
 
 Example:
 
@@ -68,6 +68,8 @@ sudo curl -s --unix-socket /run/netusbflash/api.sock http://localhost/api/v1/hea
 | PUT | `/api/v1/targets/{id}` | manager |
 | DELETE | `/api/v1/targets/{id}` | manager |
 | POST | `/api/v1/targets/{id}/test` | manager |
+| POST | `/api/v1/targets/{id}/icloud/login` | manager |
+| POST | `/api/v1/targets/{id}/icloud/code` | manager |
 | GET | `/api/v1/uploads` | viewer |
 | POST | `/api/v1/uploads/retry-failed` | operator |
 | POST | `/api/v1/uploads/{id}/retry` | operator |
@@ -136,3 +138,18 @@ sudo curl -s --unix-socket /run/netusbflash/api.sock http://localhost/api/v1/hea
   Field errors are reported as `rules.<index>.<field>`. `GET /conversion`
   also returns the allowed values (`choices`), whether ffmpeg is installed
   and the conversion queue.
+- Targets with the protocols `dropbox`, `onedrive`, `gdrive` and `box` take
+  `token` (the output of `rclone authorize`, raw JSON or rclone's base64 blob)
+  and optionally `client_secret` with `options.client_id`. Google Drive also
+  takes `options.root_folder_id` and `options.team_drive`; OneDrive takes
+  `options.drive_id` and `options.drive_type` (`personal`, `business`,
+  `documentLibrary`), which are detected via Microsoft Graph when a token is
+  pasted (`detect_failed` if that is not possible). Empty `token` or
+  `client_secret` keeps the stored value. Responses never contain secrets,
+  only `has_token`, `has_client_secret`, `has_password` and
+  `icloud_signed_in`.
+- `icloud` targets use `username` (Apple ID) and `password`.
+  `POST /targets/{id}/icloud/login` signs in with the stored values and returns
+  `{"status": "code_required"}` or `{"status": "ok"}`;
+  `POST /targets/{id}/icloud/code` with `{"code": "123456"}` finishes the
+  sign-in. Errors use the code `icloud_failed` (status 502).
